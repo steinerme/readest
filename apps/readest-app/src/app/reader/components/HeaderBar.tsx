@@ -33,6 +33,9 @@ import NotebookToggler from './NotebookToggler';
 import TranslationToggler from './TranslationToggler';
 import ViewMenu from './ViewMenu';
 import SyncInfoDialog from './SyncInfoDialog';
+import PdfReflowDialog from './PdfReflowDialog';
+import '@/styles/reader-polish.css';
+import { getPdfRendererPage } from '@/utils/pdfRendererPage';
 
 interface HeaderBarProps {
   bookKey: string;
@@ -85,8 +88,29 @@ const HeaderBar: React.FC<HeaderBarProps> = ({
 
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [isMetaHashDialogOpen, setIsMetaHashDialogOpen] = useState(false);
+  const [isPdfReflowOpen, setIsPdfReflowOpen] = useState(false);
+  const [reflowInitialPage, setReflowInitialPage] = useState<number | undefined>();
+  const defaultReflowBook = useRef<string | null>(null);
   const [headerWidth, setHeaderWidth] = useState(0);
   const view = getView(bookKey);
+  const isPdf = bookData?.book?.format === 'PDF';
+  const viewReady = useReaderStore((state) => state.viewStates[bookKey]?.inited ?? false);
+
+  useEffect(() => {
+    if (defaultReflowBook.current === bookKey) return;
+    if (!isPdf || !viewReady || !view || !bookData?.bookDoc?.sections.length) return;
+    defaultReflowBook.current = bookKey;
+    setReflowInitialPage(undefined);
+    setIsPdfReflowOpen(true);
+  }, [bookKey, isPdf, viewReady, view, bookData?.bookDoc]);
+
+  const openPdfReflow = () => {
+    defaultReflowBook.current = bookKey;
+    setReflowInitialPage(getPdfRendererPage(view?.renderer));
+    setIsDropdownOpen(false);
+    onDropdownOpenChange?.(false);
+    setIsPdfReflowOpen(true);
+  };
   const iconSize18 = useResponsiveSize(18);
 
   const docs = view?.renderer.getContents() ?? [];
@@ -221,9 +245,12 @@ const HeaderBar: React.FC<HeaderBarProps> = ({
         ref={headerRef}
         role='banner'
         aria-label={_('Header Bar')}
+        aria-hidden={!isHeaderVisible}
+        inert={!isHeaderVisible}
+        data-visible={isHeaderVisible}
         className={clsx(
-          `header-bar bg-base-100 absolute top-0 z-10 flex h-11 w-full items-center pr-4`,
-          `shadow-xs transition-[opacity,margin-top] duration-300`,
+          `header-bar reading-chrome bg-base-100 absolute top-0 z-10 flex h-11 w-full items-center pr-4`,
+          'shadow-xs',
           trafficLightInHeader ? 'pl-20' : isSideBarVisible ? 'ps-4' : 'ps-4 sm:ps-1.5',
           appService?.hasRoundedWindow && 'rounded-window-top-right',
           !isSideBarVisible && appService?.hasRoundedWindow && 'rounded-window-top-left',
@@ -269,6 +296,16 @@ const HeaderBar: React.FC<HeaderBarProps> = ({
             >
               <VscLibrary size={iconSize18} className='fill-base-content' />
             </button>
+            {isPdf && (
+              <button
+                type='button'
+                className='btn btn-ghost min-h-11 h-11 shrink-0 px-2 text-sm'
+                aria-label={_('Switch to Reflow')}
+                onClick={openPdfReflow}
+              >
+                {_('Switch to Reflow')}
+              </button>
+            )}
             <BookmarkToggler bookKey={bookKey} />
             <TranslationToggler bookKey={bookKey} />
           </div>
@@ -343,8 +380,20 @@ const HeaderBar: React.FC<HeaderBarProps> = ({
             <ViewMenu
               bookKey={bookKey}
               onShowMetaHashDialog={() => setIsMetaHashDialogOpen(true)}
+              onOpenPdfReflow={openPdfReflow}
             />
           </Dropdown>
+          {isPdfReflowOpen && bookData?.book?.format === 'PDF' && (
+            <ModalPortal showOverlay={false}>
+              <PdfReflowDialog
+                key={bookKey}
+                bookKey={bookKey}
+                initialPage={reflowInitialPage}
+                onClose={() => setIsPdfReflowOpen(false)}
+                onGoToLibrary={onGoToLibrary}
+              />
+            </ModalPortal>
+          )}
           {isMetaHashDialogOpen && (
             <ModalPortal showOverlay={false}>
               <SyncInfoDialog

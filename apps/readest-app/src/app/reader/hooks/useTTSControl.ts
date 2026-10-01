@@ -84,6 +84,7 @@ export const useTTSControl = ({ bookKey, onRequestHidePanel }: UseTTSControlProp
   const previousSectionLabelRef = useRef<string | undefined>(undefined);
   const ttsControllerRef = useRef<TTSController | null>(null);
   const isStartingTTSRef = useRef(false);
+  const ttsStartGenerationRef = useRef(0);
   // Last broadcast playback state, so a follower engaging mid-session can be
   // replayed the current state on demand (see handleTTSSyncRequest).
   const playbackStateRef = useRef<'playing' | 'paused' | 'stopped'>('stopped');
@@ -216,11 +217,16 @@ export const useTTSControl = ({ bookKey, onRequestHidePanel }: UseTTSControlProp
       eventDispatcher.off('tts-set-rate', handleTTSSetRate);
       eventDispatcher.off('tts-highlight-sentence', handleTTSHighlightSentence);
       eventDispatcher.off('tts-sync-request', handleTTSSyncRequest);
+      ttsStartGenerationRef.current++;
       if (ttsControllerRef.current) {
         const controller = ttsControllerRef.current;
         const bookHash = getBookHashFromKey(bookKey);
         const session = ttsSessionManager.getSessionByHash(bookHash);
-        if (session?.controller === controller && !controller.terminated) {
+        if (
+          !isStartingTTSRef.current &&
+          session?.controller === controller &&
+          !controller.terminated
+        ) {
           // Ownership transfers to the manager: the session keeps playing
           // headless (route unmount, deep-link book switch, split-view pane
           // close all funnel through this cleanup).
@@ -251,10 +257,12 @@ export const useTTSControl = ({ bookKey, onRequestHidePanel }: UseTTSControlProp
       ) {
         return;
       }
+      ttsStartGenerationRef.current++;
       ttsControllerRef.current = null;
       setTtsController(null);
       setIsPlaying(false);
       setIsPaused(false);
+      emitPlaybackState('stopped');
       setShowIndicator(false);
       setShowBackToCurrentTTSLocation(false);
       setTTSEnabled(bookKey, false);
@@ -614,11 +622,11 @@ export const useTTSControl = ({ bookKey, onRequestHidePanel }: UseTTSControlProp
       if (state === 'playing') {
         setIsPlaying(true);
         setIsPaused(false);
-        playbackStateRef.current = 'playing';
+        emitPlaybackState('playing');
       } else if (state.includes('paused')) {
         setIsPlaying(false);
         setIsPaused(true);
-        playbackStateRef.current = 'paused';
+        emitPlaybackState('paused');
       }
     };
 
@@ -878,6 +886,8 @@ export const useTTSControl = ({ bookKey, onRequestHidePanel }: UseTTSControlProp
     // end up creating two TTSController instances that speak simultaneously.
     if (isStartingTTSRef.current) return;
     isStartingTTSRef.current = true;
+    const startGeneration = ++ttsStartGenerationRef.current;
+    let startingController: TTSController | null = null;
 
     try {
       const view = getView(bookKey);
@@ -889,7 +899,7 @@ export const useTTSControl = ({ bookKey, onRequestHidePanel }: UseTTSControlProp
       const ttsSpeakRange = range as Range | null;
       let ttsFromRange = ttsSpeakRange;
       let ttsFromIndex = typeof index === 'number' ? index : null;
-      if (!ttsFromRange && viewSettings.ttsLocation) {
+      if (!ttsFromRange && ttsFromIndex === null && viewSettings.ttsLocation) {
         const ttsCfi = viewSettings.ttsLocation;
         if (isCfiInLocation(ttsCfi, location)) {
           const { index, anchor } = view.resolveCFI(ttsCfi);
@@ -901,7 +911,7 @@ export const useTTSControl = ({ bookKey, onRequestHidePanel }: UseTTSControlProp
         }
       }
 
-      if (!ttsFromIndex) {
+      if (ttsFromIndex === null) {
         ttsFromIndex = progress.index;
       }
 
@@ -955,6 +965,10 @@ export const useTTSControl = ({ bookKey, onRequestHidePanel }: UseTTSControlProp
           preprocessSSMLForTTS,
           handleSectionChange,
         );
+        startingController = ttsController;
+        const startIsCurrent = () =>
+          startGeneration === ttsStartGenerationRef.current &&
+          ttsControllerRef.current === ttsController;
         ttsController.setSkipInlineAnnotations(viewSettings.ttsSkipInlineAnnotations ?? false);
         // The constructor takes the view directly (attachView, which also binds
         // this, only runs on the background-session reattach path), so set the
@@ -989,7 +1003,9 @@ export const useTTSControl = ({ bookKey, onRequestHidePanel }: UseTTSControlProp
         // own narration or a synthesized voice.
         ttsController.useNarration = viewSettings.ttsUseNarration ?? true;
         await ttsController.init();
+        if (!startIsCurrent()) return;
         await ttsController.initViewTTS(ttsFromIndex);
+        if (!startIsCurrent()) return;
         ttsController.updateHighlightOptions(
           getTTSHighlightOptions(
             viewSettings.ttsHighlightOptions,
@@ -1026,17 +1042,21 @@ export const useTTSControl = ({ bookKey, onRequestHidePanel }: UseTTSControlProp
           // so it must not be treated as a one-shot utterance that stops the
           // session the moment the first clip ends.
           ttsController.speak(ssml, oneTime && !narrateSelection, () => handleStop(bookKey));
+          if (!startIsCurrent()) return;
           ttsController.setTargetLang(getTTSTargetLang() || '');
         } else {
           // Nothing to speak: roll back the optimistic playing state.
           setIsPlaying(false);
+          emitPlaybackState('stopped');
         }
         setTtsClientsInitialized(true);
         syncClientCapabilities();
         setTTSEnabled(bookKey, true);
       } catch (error) {
+        if (startGeneration !== ttsStartGenerationRef.current) return;
         setShowIndicator(false);
         setIsPlaying(false);
+        emitPlaybackState('stopped');
         eventDispatcher.dispatch('toast', {
           message: _('TTS not supported for this document'),
           type: 'error',
@@ -1044,13 +1064,31 @@ export const useTTSControl = ({ bookKey, onRequestHidePanel }: UseTTSControlProp
         console.error(error);
       }
     } finally {
-      isStartingTTSRef.current = false;
+      try {
+        if (
+          startingController &&
+          (startGeneration !== ttsStartGenerationRef.current ||
+            ttsControllerRef.current !== startingController)
+        ) {
+          // stop/unmount may have shut down before init finished opening its
+          // clients or document. Rejoin teardown after the last startup await
+          // so those late resources cannot outlive the cancelled controller.
+          await ttsSessionManager.stopController(
+            getBookHashFromKey(bookKey),
+            startingController,
+            'user',
+          );
+        }
+      } finally {
+        isStartingTTSRef.current = false;
+      }
     }
   };
 
   const handleTTSStop = async (event: CustomEvent) => {
     const { bookKey: ttsBookKey } = event.detail;
     if (bookKey !== ttsBookKey) return;
+    ttsStartGenerationRef.current++;
     if (ttsControllerRef.current) {
       await handleStop(bookKey);
     } else {

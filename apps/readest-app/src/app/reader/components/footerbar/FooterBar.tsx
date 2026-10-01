@@ -219,7 +219,7 @@ const FooterBar: React.FC<FooterBarProps> = ({
     'footer-bar shadow-xs bottom-0 left-0 z-10 flex w-full flex-col',
     !forceMobileLayout && 'sm:h-[52px] sm:bg-base-100 sm:border-none',
     'not-eink:border-base-300/50 eink:border-base-content border-t',
-    'transition-[opacity,transform] duration-300',
+    'reading-chrome',
     getFooterBarPosition(forceMobileLayout || window.innerWidth < 640, isSideBarPinned),
     appService?.hasRoundedWindow && 'rounded-window-bottom-right',
     !isSideBarVisible && appService?.hasRoundedWindow && 'rounded-window-bottom-left',
@@ -255,6 +255,9 @@ const FooterBar: React.FC<FooterBarProps> = ({
         ref={footerBarRef}
         role='contentinfo'
         aria-label={_('Footer Bar')}
+        aria-hidden={!isVisible}
+        inert={!isVisible}
+        data-visible={isVisible}
         className={containerClasses}
         dir={viewSettings?.rtl ? 'rtl' : 'ltr'}
         onFocus={() => !appService?.isMobile && setHoveredBookKey(bookKey)}

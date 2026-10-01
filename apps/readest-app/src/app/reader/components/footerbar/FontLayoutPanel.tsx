@@ -109,21 +109,22 @@ export const FontLayoutPanel: React.FC<FontLayoutPanelProps> = ({
   }, []);
 
   const classes = clsx(
-    'footerbar-font-mobile not-eink:bg-base-200 eink:bg-base-100 absolute flex w-full flex-col items-center gap-y-8 px-4 transition-all',
+    'footerbar-font-mobile reading-panel not-eink:bg-base-200 eink:bg-base-100 absolute flex w-full flex-col items-center gap-y-8 px-4',
     'eink:border-base-content eink:border-t',
     !forceMobileLayout && 'sm:hidden',
     // Paddings stay constant in both states (the slide is transform-only) so
     // offsetHeight always reports the panel's settled height; the TTS mini
     // player measures it to stack above the expanded panel.
     'pb-4 pt-8',
-    actionTab === 'font'
-      ? 'pointer-events-auto translate-y-0 ease-out'
-      : 'pointer-events-none invisible translate-y-full overflow-hidden ease-in',
+    actionTab === 'font' ? 'pointer-events-auto' : 'pointer-events-none overflow-hidden',
   );
 
   return (
     <div
       className={classes}
+      data-state={actionTab === 'font' ? 'open' : 'closed'}
+      aria-hidden={actionTab !== 'font'}
+      inert={actionTab !== 'font'}
       style={{
         bottom: appService?.isAndroidApp
           ? `calc(env(safe-area-inset-bottom) + 64px)`

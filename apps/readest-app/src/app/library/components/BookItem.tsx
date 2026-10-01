@@ -128,9 +128,9 @@ const BookItem: React.FC<BookItemProps> = ({
     >
       <div
         className={clsx(
-          'bookitem-main relative flex justify-center overflow-hidden rounded-sm',
+          'bookitem-main relative flex justify-center overflow-hidden',
+          showSpine ? 'library-book-cover-spined' : 'rounded-sm',
           !fitCoverInGrid && 'aspect-28/41',
-          coverFit === 'crop' && 'shadow-md',
           mode === 'grid' && 'items-end',
           mode === 'list' && 'min-w-20 items-center',
         )}
@@ -141,7 +141,7 @@ const BookItem: React.FC<BookItemProps> = ({
           book={book}
           coverFit={coverFit}
           showSpine={showSpine}
-          imageClassName={clsx('shadow-md', showSpine ? 'rounded-none' : 'rounded-sm')}
+          imageClassName={clsx(showSpine ? 'rounded-none' : 'rounded-sm')}
           onAspectRatioChange={setCoverAspect}
         />
         {isTransferring && (
@@ -165,9 +165,13 @@ const BookItem: React.FC<BookItemProps> = ({
             )}
           </div>
         )}
-        {bookSelected && (
-          <div className='absolute inset-0 bg-black opacity-30 transition-opacity duration-300'></div>
-        )}
+        <div
+          aria-hidden='true'
+          className={clsx(
+            'library-book-selection-scrim absolute inset-0 bg-black',
+            bookSelected ? 'opacity-30' : 'opacity-0',
+          )}
+        />
         {isSelectMode && (
           <div className='absolute bottom-1 right-1'>
             {bookSelected ? (
@@ -181,15 +185,15 @@ const BookItem: React.FC<BookItemProps> = ({
       <div
         className={clsx(
           'flex w-full flex-col p-0',
-          mode === 'grid' && 'pt-2',
+          mode === 'grid' && 'pt-2.5',
           mode === 'list' && 'gap-1 py-0',
         )}
       >
         <div className={clsx('min-w-0 flex-1', mode === 'list' && 'flex flex-col gap-1')}>
           <h4
             className={clsx(
-              'overflow-hidden text-ellipsis font-semibold',
-              mode === 'grid' && 'block whitespace-nowrap text-xs',
+              'library-book-title overflow-hidden text-ellipsis font-semibold',
+              mode === 'grid' && 'line-clamp-2 text-[13px] leading-[1.35] tracking-[0.01em]',
               mode === 'list' && 'line-clamp-1 text-base',
             )}
           >

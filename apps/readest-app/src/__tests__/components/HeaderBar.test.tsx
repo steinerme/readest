@@ -31,10 +31,11 @@ vi.mock('@/store/themeStore', () => ({
 vi.mock('@/store/sidebarStore', () => ({
   useSidebarStore: () => ({ isSideBarVisible: false, getIsSideBarVisible: () => false }),
 }));
+let hoveredBookKey = 'book-1';
 vi.mock('@/store/readerStore', () => ({
   useReaderStore: () => ({
     bookKeys: ['book-1'],
-    hoveredBookKey: 'book-1',
+    hoveredBookKey,
     getView: () => null,
     getViewSettings: () => ({ enableAnnotationQuickActions: false }),
     setHoveredBookKey: vi.fn(),
@@ -105,6 +106,27 @@ afterEach(() => {
   vi.unstubAllGlobals();
   useEnvMock.mockReset();
   currentBookData = null;
+  hoveredBookKey = 'book-1';
+});
+
+describe('HeaderBar reading motion', () => {
+  it('uses scoped compositor motion without animating safe-area margins', () => {
+    const { container } = renderHeader();
+    const bar = container.querySelector('.header-bar')!;
+    expect(bar.classList.contains('reading-chrome')).toBe(true);
+    expect(bar.className).not.toContain('transition-[opacity,margin-top]');
+    expect(bar.getAttribute('data-visible')).toBe('true');
+    expect(bar.hasAttribute('inert')).toBe(false);
+  });
+
+  it('keeps a hidden toolbar mounted but removes it from focus and accessibility', () => {
+    hoveredBookKey = '';
+    const { container } = renderHeader();
+    const bar = container.querySelector('.header-bar')!;
+    expect(bar.getAttribute('data-visible')).toBe('false');
+    expect(bar.getAttribute('aria-hidden')).toBe('true');
+    expect(bar.hasAttribute('inert')).toBe(true);
+  });
 });
 
 describe('HeaderBar sidebar toggle', () => {

@@ -21,13 +21,13 @@ const LibraryEmptyState: React.FC<LibraryEmptyStateProps> = ({ onImport }) => {
   const isMobile = appService?.isMobile ?? false;
 
   return (
-    <div className='hero-content text-neutral-content text-center'>
+    <div className='library-polish-empty hero-content text-neutral-content text-center'>
       <div className='flex max-w-md flex-col items-center'>
-        <PiBooks aria-hidden className='text-base-content/60 mb-10 size-16' />
-        <h1 className='mb-5 text-balance text-4xl font-semibold leading-tight tracking-tight'>
+        <PiBooks aria-hidden className='text-base-content/60 mb-6 size-14' />
+        <h1 className='mb-3 text-balance text-2xl font-semibold leading-tight tracking-tight sm:text-3xl'>
           {_('Start your library')}
         </h1>
-        <p className='text-base-content/70 mb-12 text-pretty text-base leading-relaxed'>
+        <p className='text-base-content/70 mb-8 max-w-sm text-pretty text-sm leading-relaxed sm:text-base'>
           {isMobile
             ? _('Pick a book from your device to add it to your library.')
             : _('Drop a book anywhere on this window, or pick one from your computer.')}

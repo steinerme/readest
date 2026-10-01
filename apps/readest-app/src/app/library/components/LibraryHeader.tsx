@@ -8,6 +8,7 @@ import { PiDotsThreeCircle } from 'react-icons/pi';
 import { MdOutlineMenu } from 'react-icons/md';
 import { IoMdCloseCircle } from 'react-icons/io';
 
+import '@/styles/library-polish.css';
 import { useEnv } from '@/context/EnvContext';
 import { useThemeStore } from '@/store/themeStore';
 import { useTranslation } from '@/hooks/useTranslation';
@@ -93,7 +94,7 @@ const LibraryHeader: React.FC<LibraryHeaderProps> = ({
     <div
       ref={headerRef}
       className={clsx(
-        'titlebar z-10 flex h-[52px] w-full items-center py-2 pr-4 sm:h-[44px]',
+        'library-polish-header titlebar z-10 flex h-[52px] w-full items-center py-2 pr-4 sm:h-[44px]',
         windowButtonVisible ? 'sm:pr-4' : 'sm:pr-6',
         isTrafficLightVisible ? 'pl-16' : 'pl-0 sm:pl-2',
       )}
@@ -105,7 +106,7 @@ const LibraryHeader: React.FC<LibraryHeaderProps> = ({
     >
       <div className='flex w-full items-center justify-between space-x-6 sm:space-x-12'>
         <div className='exclude-title-bar-mousedown relative flex w-full items-center ps-4'>
-          <div className='relative flex h-9 w-full items-center sm:h-7'>
+          <div className='library-polish-search-shell relative flex h-9 w-full items-center sm:h-7'>
             {/* The icon doubles as the mode indicator and toggle: magnifier
                 for book search, full-text glyph for content search. */}
             <div className='absolute inset-y-0 start-0 z-10 flex items-center'>
@@ -116,8 +117,8 @@ const LibraryHeader: React.FC<LibraryHeaderProps> = ({
                 title={searchTarget === 'text' ? _('Full Text Search') : _('Search Books')}
                 className={clsx(
                   'text-base-content/55 hover:text-base-content',
-                  'not-eink:transition-colors ms-1.5 flex h-7 min-h-7 items-center justify-center',
-                  'touch-target w-8 rounded-full bg-transparent duration-150',
+                  'library-polish-control not-eink:transition-colors ms-1.5 flex h-7 min-h-7 items-center justify-center',
+                  'touch-target w-8 rounded-full bg-transparent',
                   'focus-visible:ring-base-content/15 focus-visible:outline-hidden focus-visible:ring-2',
                 )}
                 onClick={() => onSearchTargetChange(searchTarget === 'text' ? 'books' : 'text')}
@@ -144,8 +145,8 @@ const LibraryHeader: React.FC<LibraryHeaderProps> = ({
               onChange={handleSearchChange}
               spellCheck='false'
               className={clsx(
-                'search-input input h-9 w-full rounded-full pe-[30%] ps-10 sm:h-7',
-                'bg-base-300/45 border-0',
+                'library-polish-search search-input input h-9 w-full rounded-full pe-[30%] ps-10 sm:h-7',
+                'border-0',
                 'font-sans text-sm font-light',
                 'placeholder:text-base-content/50 truncate',
                 'focus:outline-hidden focus:ring-0',

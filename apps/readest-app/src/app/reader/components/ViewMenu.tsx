@@ -47,12 +47,14 @@ interface ViewMenuProps {
   bookKey: string;
   setIsDropdownOpen?: (open: boolean) => void;
   onShowMetaHashDialog?: () => void;
+  onOpenPdfReflow?: () => void;
 }
 
 const ViewMenu: React.FC<ViewMenuProps> = ({
   bookKey,
   setIsDropdownOpen,
   onShowMetaHashDialog,
+  onOpenPdfReflow,
 }) => {
   const _ = useTranslation();
   const router = useRouter();
@@ -589,6 +591,15 @@ const ViewMenu: React.FC<ViewMenuProps> = ({
         }
         onClick={cycleThemeMode}
       />
+      {bookData.book?.format === 'PDF' && onOpenPdfReflow && (
+        <MenuItem
+          label={_('PDF Text Reflow')}
+          onClick={() => {
+            setIsDropdownOpen?.(false);
+            onOpenPdfReflow();
+          }}
+        />
+      )}
       <MenuItem label={_('Settings')} Icon={PiGear} onClick={openSettingsDialog} />
       {bookData.book?.format === 'PDF' && appService?.supportsCanvasContext2DFilter && (
         <MenuItem

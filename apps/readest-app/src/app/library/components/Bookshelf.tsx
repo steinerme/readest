@@ -931,7 +931,7 @@ const Bookshelf: React.FC<BookshelfProps> = ({
       tabIndex={-1}
       role='main'
       aria-label={_('Bookshelf')}
-      className='bookshelf flex min-h-0 grow flex-col focus:outline-hidden'
+      className='bookshelf library-polish flex min-h-0 grow flex-col focus:outline-hidden'
     >
       {!contentSearch?.query.trim() && queryTerm && (
         <div className='flex shrink-0 justify-center px-4 pb-2'>
@@ -943,6 +943,7 @@ const Bookshelf: React.FC<BookshelfProps> = ({
               'text-base-content/80 hover:text-base-content not-eink:transition-colors',
               'flex h-9 items-center gap-2 rounded-lg border px-4 text-sm font-medium duration-150',
               'focus-visible:ring-base-content/15 focus-visible:outline-hidden focus-visible:ring-2',
+              'library-polish-control',
             )}
           >
             <MdManageSearch aria-hidden='true' className='h-5 w-5' />

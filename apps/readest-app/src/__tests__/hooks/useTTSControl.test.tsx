@@ -265,7 +265,7 @@ vi.mock('@/utils/throttle', () => ({
 }));
 
 vi.mock('@/utils/cfi', () => ({
-  isCfiInLocation: () => false,
+  isCfiInLocation: vi.fn(() => false),
 }));
 
 vi.mock('@/utils/misc', () => ({
@@ -297,6 +297,8 @@ vi.mock('@/utils/ttsTime', () => ({
 
 // Imports must come AFTER vi.mock calls so they pick up the mocked modules.
 import { useTTSControl } from '@/app/reader/hooks/useTTSControl';
+import { usePdfReflowTTS } from '@/app/reader/hooks/usePdfReflowTTS';
+import { isCfiInLocation } from '@/utils/cfi';
 import { ttsMediaBridge } from '@/services/tts/ttsMediaBridge';
 import { eventDispatcher } from '@/utils/event';
 import { pageBreakFraction } from '@/utils/ttsPageFollow';
@@ -1257,5 +1259,133 @@ describe('useTTSControl gap control (handleSetSentenceGap / handleSupportsGapCon
     expect(mockViewSettings.ttsRate).toBe(1.5);
     expect(controller.setSentenceGap).toHaveBeenCalledWith(0.12);
     expect(controller.setParagraphGap).toHaveBeenCalledWith(0.24);
+  });
+});
+
+describe('useTTSControl explicit page and cancellable startup', () => {
+  type StartupController = {
+    init: ReturnType<typeof vi.fn>;
+    initViewTTS: ReturnType<typeof vi.fn>;
+    speak: ReturnType<typeof vi.fn>;
+    startFromRange: ReturnType<typeof vi.fn>;
+    shutdown: ReturnType<typeof vi.fn>;
+  };
+  const drain = async () => {
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+  };
+  const controller = () => ttsControllerInstances[0] as StartupController;
+  const ReflowHarness = () => {
+    useTTSControl({ bookKey: 'book-1' });
+    const { state } = usePdfReflowTTS({
+      bookKey: 'book-1', page: 0, count: 3, result: null,
+      setPage: vi.fn(), scrollRef: { current: null },
+    });
+    return <output data-testid='reflow-tts-state'>{state}</output>;
+  };
+
+  beforeEach(() => {
+    ttsControllerInstances.length = 0;
+    pendingInitResolvers.length = 0;
+    mockSessionManager.getSessionByHash.mockReturnValue(null);
+    mockSessionManager.getActiveSession.mockReturnValue(null);
+    mockSessionManager.addEventListener.mockClear();
+    mockSessionManager.detach.mockClear();
+    mockSessionManager.stopController.mockClear();
+    getSetTTSEnabledMock().mockClear();
+  });
+  afterEach(() => {
+    cleanup();
+    mockViewSettings.ttsLocation = null;
+    mockProgress.index = 0;
+    mockProgress.range = null;
+    mockBookData.isFixedLayout = false;
+    vi.mocked(isCfiInLocation).mockReturnValue(false);
+    mockView.resolveCFI.mockReturnValue({ index: 0, anchor: () => new Range() });
+  });
+
+  it.each([0, 2])('honors explicit index=%i over progress and a visible saved CFI', async (index) => {
+    mockProgress.index = 1;
+    mockViewSettings.ttsLocation = 'saved-cfi';
+    mockBookData.isFixedLayout = true;
+    vi.mocked(isCfiInLocation).mockReturnValue(true);
+    mockView.resolveCFI.mockReturnValue({ index: 0, anchor: () => new Range() });
+    mockView.resolveCFI.mockClear();
+    render(<Harness />);
+    await act(async () => {
+      const start = eventDispatcher.dispatch('tts-speak', { bookKey: 'book-1', index });
+      await drain();
+      pendingInitResolvers.shift()!();
+      await start;
+    });
+    expect(controller().initViewTTS).toHaveBeenCalledWith(index);
+    expect(mockView.resolveCFI).not.toHaveBeenCalled();
+    expect(controller().startFromRange).not.toHaveBeenCalled();
+    expect(controller().speak).toHaveBeenCalled();
+  });
+
+  it('stops during init and closes resources initialized after the first teardown', async () => {
+    render(<Harness />);
+    let resourcesOpen = false;
+    await act(async () => {
+      const start = eventDispatcher.dispatch('tts-speak', { bookKey: 'book-1' });
+      await drain();
+      controller().shutdown.mockImplementation(async () => { resourcesOpen = false; });
+      await eventDispatcher.dispatch('tts-stop', { bookKey: 'book-1' });
+      // A client can finish opening after stop's initial shutdown has settled.
+      resourcesOpen = true;
+      pendingInitResolvers.shift()!();
+      await start;
+    });
+    expect(controller().initViewTTS).not.toHaveBeenCalled();
+    expect(controller().speak).not.toHaveBeenCalled();
+    expect(resourcesOpen).toBe(false);
+    expect(getSetTTSEnabledMock()).not.toHaveBeenCalledWith('book-1', true);
+  });
+
+  it('cancels rather than detaches a still-starting controller on unmount', async () => {
+    const mounted = render(<Harness />);
+    let finishView!: () => void;
+    let resourcesOpen = false;
+    await act(async () => {
+      const start = eventDispatcher.dispatch('tts-speak', { bookKey: 'book-1' });
+      await drain();
+      controller().initViewTTS.mockImplementation(() => new Promise<void>((resolve) => {
+        finishView = () => { resourcesOpen = true; resolve(); };
+      }));
+      controller().shutdown.mockImplementation(async () => { resourcesOpen = false; });
+      mockSessionManager.getSessionByHash.mockReturnValue({ controller: controller() });
+      pendingInitResolvers.shift()!();
+      await drain();
+      mounted.unmount();
+      await drain();
+      finishView();
+      await start;
+    });
+    expect(controller().speak).not.toHaveBeenCalled();
+    expect(mockSessionManager.detach).not.toHaveBeenCalled();
+    expect(mockSessionManager.stopController).toHaveBeenCalledWith('book', controller(), 'user');
+    expect(resourcesOpen).toBe(false);
+    expect(getSetTTSEnabledMock()).not.toHaveBeenCalledWith('book-1', true);
+  });
+
+  it('keeps the reflow follower stopped when speak synchronously terminates the session', async () => {
+    render(<ReflowHarness />);
+    await act(async () => {
+      const start = eventDispatcher.dispatch('tts-speak', { bookKey: 'book-1', index: 0 });
+      await drain();
+      const listener = mockSessionManager.addEventListener.mock.calls.find(
+        ([name]) => name === 'session-changed',
+      )?.[1] as (event: Event) => void;
+      controller().speak.mockImplementation(() => {
+        listener(new CustomEvent('session-changed', {
+          detail: { reason: 'stopped', session: { controller: controller() } },
+        }));
+      });
+      pendingInitResolvers.shift()!();
+      await start;
+      await eventDispatcher.dispatch('tts-sync-request', { bookKey: 'book-1' });
+    });
+    expect(screen.getByTestId('reflow-tts-state').textContent).toBe('stopped');
+    expect(getSetTTSEnabledMock()).toHaveBeenLastCalledWith('book-1', false);
   });
 });

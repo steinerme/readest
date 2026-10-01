@@ -1,5 +1,5 @@
 import clsx from 'clsx';
-import React, { ReactNode, useEffect, useRef, useState } from 'react';
+import React, { ReactNode, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { OverlayScrollbarsComponent } from 'overlayscrollbars-react';
 import 'overlayscrollbars/overlayscrollbars.css';
 import { MdArrowBackIosNew, MdArrowForwardIos } from 'react-icons/md';
@@ -12,6 +12,8 @@ import { useResponsiveSize } from '@/hooks/useResponsiveSize';
 import { impactFeedback } from '@tauri-apps/plugin-haptics';
 import { getDirFromUILanguage } from '@/utils/rtl';
 import { eventDispatcher } from '@/utils/event';
+import { getDialogSwipeCloseDurationMs, isDialogMotionReduced } from '@/utils/dialogMotion';
+import '@/styles/dialog-polish.css';
 import { Overlay } from './Overlay';
 
 const VELOCITY_THRESHOLD = 0.5;
@@ -68,6 +70,16 @@ const hasScrollableAncestor = (target: HTMLElement, root: HTMLElement) => {
 const isEditable = (target: HTMLElement) =>
   !!target.closest('input, textarea, select, [contenteditable=""], [contenteditable="true"]');
 
+// These are the only properties mutated imperatively during a drag. React owns
+// safe-area padding and all other inline styles on the box.
+const clearDialogDragStyles = (modal: HTMLElement, overlay: HTMLElement) => {
+  modal.style.removeProperty('height');
+  modal.style.removeProperty('transform');
+  modal.style.removeProperty('transition');
+  overlay.style.removeProperty('opacity');
+  overlay.style.removeProperty('transition');
+};
+
 const Dialog: React.FC<DialogProps> = ({
   id,
   isOpen,
@@ -96,6 +108,7 @@ const Dialog: React.FC<DialogProps> = ({
   // that edge, the body does not.
   const dragOffsetRef = useRef(0);
   const pendingSwipeRef = useRef<{ x: number; y: number } | null>(null);
+  const dragResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const previousActiveElementRef = useRef<HTMLElement | null>(null);
   const iconSize22 = useResponsiveSize(22);
   const isMobile = window.innerWidth < 640 || window.innerHeight < 640;
@@ -121,6 +134,34 @@ const Dialog: React.FC<DialogProps> = ({
     const timer = setTimeout(() => setIsBodyHoldOver(true), CLOSE_TRANSITION_MS);
     return () => clearTimeout(timer);
   }, [isOpen]);
+
+  useLayoutEffect(() => {
+    if (isOpen) {
+      if (dragResetTimerRef.current !== null) {
+        clearTimeout(dragResetTimerRef.current);
+        dragResetTimerRef.current = null;
+      }
+      pendingSwipeRef.current = null;
+      const modal = dialogRef.current?.querySelector('.modal-box') as HTMLElement | null;
+      const overlay = dialogRef.current?.querySelector('.overlay') as HTMLElement | null;
+      if (modal && overlay) {
+        clearDialogDragStyles(modal, overlay);
+        // React will not rewrite an unchanged style prop after imperative drag
+        // mutations. Explicitly restore the resting height before first paint.
+        if (isMobile) modal.style.height = `${snapHeight ? snapHeight * 100 : 100}%`;
+      }
+    }
+  }, [isOpen, isMobile, snapHeight]);
+
+  useEffect(
+    () => () => {
+      if (dragResetTimerRef.current !== null) {
+        clearTimeout(dragResetTimerRef.current);
+        dragResetTimerRef.current = null;
+      }
+    },
+    [],
+  );
 
   const handleKeyDown = (event: KeyboardEvent | CustomEvent) => {
     // A nested confirmation owns dismissal until it closes.
@@ -196,7 +237,11 @@ const Dialog: React.FC<DialogProps> = ({
       overlay.style.opacity = `${1 - heightFraction}`;
 
       setIsFullHeightInMobile(top < 44);
-      modal.style.transition = `padding-top 0.3s ease-out`;
+      if (isDialogMotionReduced()) {
+        modal.style.removeProperty('transition');
+      } else {
+        modal.style.transition = `padding-top 0.3s ease-out`;
+      }
     }
   };
 
@@ -217,19 +262,29 @@ const Dialog: React.FC<DialogProps> = ({
         (data.velocity >= 0 && top >= window.innerHeight * snapLower))
     ) {
       // dialog is dismissed
-      const transitionDuration = 0.15 / Math.max(data.velocity, 0.5);
-      modal.style.height = '100%';
-      modal.style.transition = `transform ${transitionDuration}s ease-out`;
-      modal.style.transform = 'translateY(100%)';
-      overlay.style.transition = `opacity ${transitionDuration}s ease-out`;
-      overlay.style.opacity = '0';
+      if (dragResetTimerRef.current !== null) {
+        clearTimeout(dragResetTimerRef.current);
+        dragResetTimerRef.current = null;
+      }
+      const reduceMotion = isDialogMotionReduced();
+      if (reduceMotion) {
+        clearDialogDragStyles(modal, overlay);
+      } else {
+        const durationMs = getDialogSwipeCloseDurationMs(data.velocity);
+        modal.style.height = '100%';
+        modal.style.transition = `transform ${durationMs}ms ease-out`;
+        modal.style.transform = 'translateY(100%)';
+        overlay.style.transition = `opacity ${durationMs}ms ease-out`;
+        overlay.style.opacity = '0';
+        dragResetTimerRef.current = setTimeout(() => {
+          dragResetTimerRef.current = null;
+          if (!dialogRef.current?.open) clearDialogDragStyles(modal, overlay);
+        }, CLOSE_TRANSITION_MS);
+      }
       onClose();
       if (appService?.hasHaptics) {
         impactFeedback('light');
       }
-      setTimeout(() => {
-        modal.style.transform = 'translateY(0%)';
-      }, 300);
     } else if (
       snapHeight &&
       (data.canceled ||
@@ -247,10 +302,8 @@ const Dialog: React.FC<DialogProps> = ({
       modal.style.transform = `translateY(${currentTop - restingTop}px)`;
       // Commit the equivalent position before animating back to rest.
       modal.getBoundingClientRect();
-      const reduceMotion =
-        window.matchMedia('(prefers-reduced-motion: reduce)').matches ||
-        document.documentElement.dataset['eink'] === 'true';
-      const easing = '0.3s cubic-bezier(0.22, 1, 0.36, 1)';
+      const reduceMotion = isDialogMotionReduced();
+      const easing = '300ms cubic-bezier(0.22, 1, 0.36, 1)';
       modal.style.transition = reduceMotion ? 'none' : `transform ${easing}`;
       modal.style.transform = '';
       overlay.style.transition = reduceMotion ? 'none' : `opacity ${easing}`;
@@ -259,8 +312,10 @@ const Dialog: React.FC<DialogProps> = ({
       // dialog is opened without snap
       setIsFullHeightInMobile(true);
       modal.style.height = '100%';
-      modal.style.transition = `transform 0.3s ease-out`;
+      const reduceMotion = isDialogMotionReduced();
+      modal.style.transition = reduceMotion ? 'none' : `transform 300ms ease-out`;
       modal.style.transform = `translateY(0%)`;
+      overlay.style.transition = reduceMotion ? 'none' : `opacity 300ms ease-out`;
       overlay.style.opacity = '0';
     }
   };
@@ -323,7 +378,7 @@ const Dialog: React.FC<DialogProps> = ({
       aria-label={title}
       aria-hidden={!isOpen}
       className={clsx(
-        'modal sm:min-w-90 z-50 h-full w-full items-start! bg-transparent! sm:w-full sm:items-center!',
+        'modal reading-dialog sm:min-w-90 z-50 h-full w-full items-start! bg-transparent! sm:w-full sm:items-center!',
         className,
       )}
       dir={isRtl ? 'rtl' : undefined}

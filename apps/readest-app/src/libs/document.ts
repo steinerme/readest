@@ -50,6 +50,13 @@ export interface SectionItem {
   // Resolve a reference a script introduces after load (see observeDynamicResources).
   loadHref?: (href: string) => Promise<string>;
   createDocument: () => Promise<Document>;
+  // Available only for PDF sections; original page coordinates, no canvas.
+  getReflowText?: () => Promise<{
+    items: import('@/utils/pdfReflow').PdfTextItem[];
+    width: number;
+    height: number;
+    rotation: number;
+  }>;
 
   // EPUB 3 Media Overlays: the manifest item of this section's SMIL file, or
   // null when the section has no recorded narration. Populated by foliate's

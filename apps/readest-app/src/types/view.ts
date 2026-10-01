@@ -47,6 +47,8 @@ export interface Renderer extends HTMLElement {
   goTo: (params: { index: number; anchor?: number | RangeAnchor }) => Promise<void>;
   setStyles?: (css: string) => void;
   primaryIndex: number;
+  /** fixed-layout physical section index; primaryIndex is not implemented there. */
+  index?: number;
   getContents: () => { doc: Document; index?: number; overlayer?: unknown }[];
   scrollToAnchor?: (anchor: number | Range, reason?: string, smooth?: boolean) => void;
   addEventListener: (

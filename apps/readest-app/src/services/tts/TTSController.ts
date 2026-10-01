@@ -667,7 +667,7 @@ export class TTSController extends EventTarget {
 
   async initViewTTS(index?: number) {
     if (this.#ttsSectionIndex === -1) {
-      const fromSectionIndex = (index || this.#getPrimaryContent()?.index) ?? 0;
+      const fromSectionIndex = index ?? this.#getPrimaryContent()?.index ?? 0;
       await this.#initTTSForSection(fromSectionIndex);
     }
   }
@@ -1895,7 +1895,14 @@ export class TTSController extends EventTarget {
   // Canonical position signal emitted from the same paths as
   // tts-highlight-mark / tts-highlight-word. The controller is the source of
   // truth (it owns the section index and current word/sentence CFI).
-  #dispatchPosition(cfi: string, kind: 'word' | 'sentence') {
+  #dispatchPosition(cfi: string, kind: 'word' | 'sentence', positionRange?: Range) {
+    // PDF CFIs can belong to a controller-owned offscreen textLayer rather
+    // than the renderer's current document. Carry its real Range locally so
+    // reflow never guesses by a repeated sentence or manufactures a CFI.
+    const range = positionRange ?? this.#getCurrentPlaybackRange();
+    const pdfRange = range?.startContainer.ownerDocument?.querySelector('.textLayer')
+      ? range.cloneRange()
+      : undefined;
     this.dispatchEvent(
       new CustomEvent('tts-position', {
         detail: {
@@ -1903,6 +1910,7 @@ export class TTSController extends EventTarget {
           kind,
           sectionIndex: this.#ttsSectionIndex,
           sequence: ++ttsPositionSequence,
+          ...(pdfRange ? { range: pdfRange } : {}),
         },
       }),
     );
@@ -2087,7 +2095,7 @@ export class TTSController extends EventTarget {
       try {
         const cfi = this.view.getCFI(this.#ttsSectionIndex, this.#lastSpeakWordRange);
         if (cfi) {
-          this.#dispatchPosition(cfi, 'word');
+          this.#dispatchPosition(cfi, 'word', this.#lastSpeakWordRange);
           return;
         }
       } catch {}
@@ -2149,7 +2157,7 @@ export class TTSController extends EventTarget {
         const cfi = this.view.getCFI(this.#ttsSectionIndex, range);
         if (cfi) {
           this.dispatchEvent(new CustomEvent('tts-highlight-word', { detail: { cfi } }));
-          this.#dispatchPosition(cfi, 'word');
+          this.#dispatchPosition(cfi, 'word', range);
         }
       } catch {}
     }
