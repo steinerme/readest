@@ -97,6 +97,20 @@ describe('TTSMiniPlayer', () => {
     vi.unstubAllGlobals();
   });
 
+  test('docked card uses flow height and exposes playback settings in full style', () => {
+    const props = makeProps({ docked: true });
+    const { container } = render(<TTSMiniPlayer {...props} />);
+    const player = container.firstElementChild as HTMLElement;
+    expect(player.className).toContain('relative');
+    expect(player.className).not.toContain('absolute');
+    expect(player.style.bottom).toBe('');
+    expect(player.style.marginBottom).toBe('');
+    fireEvent.click(screen.getByLabelText('Playback settings'));
+    expect(props.onExpand).toHaveBeenCalledOnce();
+    fireEvent.click(screen.getByLabelText('Next Sentence'));
+    expect(props.onForward).toHaveBeenCalledWith(true);
+  });
+
   // #5310: the minimal card is down to one time. Elapsed is the half nobody
   // listens by, and carrying both got the pair chopped off at any UI font size
   // above 13px.

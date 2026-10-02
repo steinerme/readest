@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { useTTSPlayerHostStore } from '@/store/ttsPlayerHostStore';
 
 vi.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => (key: string) => key,
@@ -56,11 +57,23 @@ vi.mock('@/app/reader/components/tts/TTSPlayerSheet', () => ({
   default: ({
     isOpen,
     activeSectionIndex,
+    onSetRate,
+    onSeek,
+    onClose,
   }: {
     isOpen: boolean;
     activeSectionIndex: number | null;
+    onSetRate: (rate: number) => void;
+    onSeek: (seconds: number) => void;
+    onClose: () => void;
   }) =>
-    isOpen ? <div data-testid='player-sheet' data-active-section={activeSectionIndex} /> : null,
+    isOpen ? (
+      <div data-testid='player-sheet' data-active-section={activeSectionIndex}>
+        <button onClick={() => onSetRate(1.5)}>Rate 1.5</button>
+        <button onClick={() => onSeek(42)}>Seek 42</button>
+        <button onClick={onClose}>Close Player</button>
+      </div>
+    ) : null,
 }));
 
 import TTSControl from '@/app/reader/components/tts/TTSControl';
@@ -102,6 +115,8 @@ describe('TTSControl', () => {
 
   afterEach(() => {
     cleanup();
+    useTTSPlayerHostStore.setState({ hosts: {} });
+    document.querySelectorAll('[data-test-host]').forEach((host) => host.remove());
     vi.clearAllMocks();
   });
 
@@ -152,6 +167,37 @@ describe('TTSControl', () => {
     render(<TTSControl bookKey='b1' gridInsets={gridInsets} />);
     fireEvent.click(screen.getByTestId('mini-player'));
     expect(screen.getByTestId('player-sheet').getAttribute('data-active-section')).toBe('2');
+  });
+
+  test('borrows the original player in reflow and returns it without remounting the owner', () => {
+    const { container } = render(<TTSControl bookKey='b1' gridInsets={gridInsets} />);
+    const host = document.createElement('div');
+    host.dataset['testHost'] = 'true';
+    document.body.append(host);
+    act(() => useTTSPlayerHostStore.getState().setHost('b1', host));
+    expect(host.contains(screen.getByTestId('mini-player'))).toBe(true);
+    expect(container.querySelector('[data-testid="mini-player"]')).toBeNull();
+    fireEvent.click(screen.getByTestId('mini-player'));
+    expect(host.contains(screen.getByTestId('player-sheet'))).toBe(true);
+    fireEvent.click(screen.getByText('Rate 1.5'));
+    fireEvent.click(screen.getByText('Seek 42'));
+    expect(ttsState['handleSetRate']).toHaveBeenCalledWith(1.5);
+    expect(ttsState['handleSeekTo']).toHaveBeenCalledWith(42);
+    act(() => useTTSPlayerHostStore.getState().clearHost('b1', host));
+    expect(container.contains(screen.getByTestId('player-sheet'))).toBe(true);
+    expect(host.childElementCount).toBe(0);
+    fireEvent.click(screen.getByText('Close Player'));
+    expect(container.contains(screen.getByTestId('mini-player'))).toBe(true);
+  });
+
+  test('a stale host cleanup cannot detach a newer reflow host', () => {
+    const first = document.createElement('div');
+    const second = document.createElement('div');
+    const store = useTTSPlayerHostStore.getState();
+    store.setHost('b1', first);
+    store.setHost('b1', second);
+    store.clearHost('b1', first);
+    expect(useTTSPlayerHostStore.getState().hosts['b1']).toBe(second);
   });
 
   test('shows the back-to-TTS-location pill when reading has drifted', () => {

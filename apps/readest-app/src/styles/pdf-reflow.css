@@ -32,8 +32,8 @@
   justify-content: space-between;
   gap: 8px;
 }
-.pdf-reflow-reader button,
-.pdf-reflow-reader select,
+.pdf-reflow-reader button:not(.pdf-reflow-player-host *),
+.pdf-reflow-reader select:not(.pdf-reflow-player-host *),
 .pdf-reflow-pagination input {
   min-height: 44px;
   border: 1px solid var(--color-base-300);
@@ -43,13 +43,13 @@
   background: var(--color-base-100);
   font-size: 14px;
 }
-.pdf-reflow-reader button:disabled {
+.pdf-reflow-reader button:not(.pdf-reflow-player-host *):disabled {
   opacity: 0.4;
   cursor: default;
 }
-.pdf-reflow-reader button:focus-visible,
+.pdf-reflow-reader button:not(.pdf-reflow-player-host *):focus-visible,
 .pdf-reflow-reader input:focus-visible,
-.pdf-reflow-reader select:focus-visible {
+.pdf-reflow-reader select:not(.pdf-reflow-player-host *):focus-visible {
   outline: 2px solid var(--color-primary) !important;
   outline-offset: 2px;
 }
@@ -206,10 +206,21 @@ html[data-eink='true'] .pdf-reflow-pagination {
 html[data-eink='true'] .pdf-reflow-controls {
   box-shadow: none;
 }
-html[data-eink='true'] .pdf-reflow-reader button:disabled {
+html[data-eink='true'] .pdf-reflow-reader button:not(.pdf-reflow-player-host *):disabled {
   opacity: 1;
   color: var(--color-base-content);
   border-style: dashed;
+}
+
+/* The original player occupies real footer height, never overlays the article.
+   Its sheet stays in this overlay's stacking context and uses its own styling. */
+.pdf-reflow-player-host {
+  flex: 0 0 100%;
+  min-width: 0;
+  font-family: var(--font-sans);
+}
+.pdf-reflow-player-host:empty {
+  display: none;
 }
 
 /* Read-aloud transport stays reachable when the reading chrome is hidden. */

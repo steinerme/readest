@@ -7,6 +7,8 @@ import { useTTSControl } from '@/app/reader/hooks/useTTSControl';
 import { useTTSDownloads } from '@/app/reader/hooks/useTTSDownloads';
 import { Insets } from '@/types/misc';
 import { eventDispatcher } from '@/utils/event';
+import { createPortal } from 'react-dom';
+import { useTTSPlayerHostStore } from '@/store/ttsPlayerHostStore';
 import TTSMiniPlayer from './TTSMiniPlayer';
 import TTSPlayerSheet from './TTSPlayerSheet';
 import { useMiniPlayerAutoHide } from './useMiniPlayerAutoHide';
@@ -20,6 +22,7 @@ const TTSControl: React.FC<TTSControlProps> = ({ bookKey, gridInsets }) => {
   const _ = useTranslation();
   const { safeAreaInsets } = useThemeStore();
   const { getViewSettings } = useReaderStore();
+  const playerHost = useTTSPlayerHostStore((state) => state.hosts[bookKey]);
 
   const [showPlayerSheet, setShowPlayerSheet] = useState(false);
   const backButtonTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -73,9 +76,9 @@ const TTSControl: React.FC<TTSControlProps> = ({ bookKey, gridInsets }) => {
     eventDispatcher.dispatch('tts-stop', { bookKey });
   };
 
-  return (
+  const player = (
     <>
-      {shouldMountBackButton && (
+      {!playerHost && shouldMountBackButton && (
         <div
           className={clsx(
             'absolute left-1/2 top-0 z-50 -translate-x-1/2',
@@ -107,7 +110,8 @@ const TTSControl: React.FC<TTSControlProps> = ({ bookKey, gridInsets }) => {
           isPlaying={tts.isPlaying}
           buffering={!tts.ttsClientsInited || tts.buffering}
           isEink={isEink}
-          visible={miniPlayerVisible}
+          visible={playerHost ? true : miniPlayerVisible}
+          docked={!!playerHost}
           hasTimeline={hasTimeline}
           audioTransport={audioTransport}
           timeoutTimestamp={tts.timeoutTimestamp}
@@ -156,6 +160,7 @@ const TTSControl: React.FC<TTSControlProps> = ({ bookKey, gridInsets }) => {
       )}
     </>
   );
+  return playerHost ? createPortal(player, playerHost) : player;
 };
 
 export default TTSControl;

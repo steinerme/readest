@@ -18,10 +18,14 @@ export function useReflowNavigation(root: RefObject<HTMLDivElement | null>, onBa
     root.current?.focus();
     const nativeBack = (event: CustomEvent) => {
       if (event.detail?.keyName !== 'Back') return false;
+      // A borrowed player sheet is nested in the reflow host. Let its own
+      // native Back listener dismiss it before this reader can exit.
+      if (root.current?.querySelector('dialog[open]')) return false;
       latest.current();
       return true;
     };
     const keyboard = (event: KeyboardEvent) => {
+      if (root.current?.querySelector('dialog[open]')) return;
       if (event.key === 'Escape') {
         event.preventDefault();
         event.stopImmediatePropagation();

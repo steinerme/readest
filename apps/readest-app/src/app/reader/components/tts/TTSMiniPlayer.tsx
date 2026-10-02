@@ -66,6 +66,8 @@ type TTSMiniPlayerProps = {
   buffering: boolean;
   isEink: boolean;
   visible: boolean;
+  /** Reflow borrows this same card inside its flow-layout footer. */
+  docked?: boolean;
   hasTimeline: boolean;
   // A paired audiobook has no sentences to step by: the small step is the
   // audiobook player's 30s forward / 15s back skip and the large step moves
@@ -99,6 +101,7 @@ const TTSMiniPlayer = ({
   buffering,
   isEink,
   visible,
+  docked = false,
   hasTimeline,
   audioTransport,
   timeoutTimestamp,
@@ -144,6 +147,10 @@ const TTSMiniPlayer = ({
 
   const [panelTopOffset, setPanelTopOffset] = useState(0);
   useLayoutEffect(() => {
+    if (docked) {
+      setPanelTopOffset(0);
+      return;
+    }
     const cell = document.getElementById(`gridcell-${bookKey}`);
     const footer = barVisible ? cell?.querySelector<HTMLElement>('.footer-bar') : null;
     if (!cell || !footer) {
@@ -173,7 +180,7 @@ const TTSMiniPlayer = ({
     observer.observe(footer);
     if (panel) observer.observe(panel);
     return () => observer.disconnect();
-  }, [barVisible, bottomBarTab, bookKey, safeAreaMargin]);
+  }, [barVisible, bottomBarTab, bookKey, safeAreaMargin, docked]);
 
   const bottomOffset = viewSettings
     ? getTTSMiniPlayerBottomOffset(viewSettings, { barVisible, usesMobileBar, panelTopOffset })
@@ -213,14 +220,20 @@ const TTSMiniPlayer = ({
       role='status'
       aria-label={`${_('Reading aloud')}: ${book?.title ?? ''}`}
       className={clsx(
-        'absolute z-40 inset-x-4 sm:inset-x-0 sm:mx-auto sm:w-full sm:max-w-md',
+        docked
+          ? 'relative z-40 mx-auto w-full max-w-md'
+          : 'absolute z-40 inset-x-4 sm:inset-x-0 sm:mx-auto sm:w-full sm:max-w-md',
         'transition-[bottom,opacity] duration-300',
         visible ? 'pointer-events-auto opacity-100' : 'pointer-events-none opacity-0',
       )}
-      style={{
-        bottom: `${bottomOffset}px`,
-        marginBottom: `${safeAreaMargin}px`,
-      }}
+      style={
+        docked
+          ? undefined
+          : {
+              bottom: `${bottomOffset}px`,
+              marginBottom: `${safeAreaMargin}px`,
+            }
+      }
       onMouseEnter={() => !appService?.isMobile && setHoveredBookKey('')}
       onTouchStart={() => !appService?.isMobile && setHoveredBookKey('')}
     >
@@ -275,6 +288,19 @@ const TTSMiniPlayer = ({
                 )}
               </div>
             </div>
+            {docked && (
+              <button
+                type='button'
+                aria-label={_('Playback settings')}
+                onClick={onExpand}
+                className='shrink-0 rounded-full p-1'
+              >
+                <SpeedSettingsIcon
+                  size={iconSize26}
+                  label={formatRate(viewSettings?.ttsRate ?? 1.0)}
+                />
+              </button>
+            )}
             {timerLabel && (
               <span className='shrink-0 text-xs tabular-nums opacity-70'>{timerLabel}</span>
             )}

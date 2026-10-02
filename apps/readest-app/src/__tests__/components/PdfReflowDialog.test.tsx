@@ -2,6 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import PdfReflowDialog from '@/app/reader/components/PdfReflowDialog';
 import { eventDispatcher } from '@/utils/event';
+import { useTTSPlayerHostStore } from '@/store/ttsPlayerHostStore';
 
 vi.mock('@/context/EnvContext', () => ({ useEnv: () => ({ appService: { isAndroidApp: true } }) }));
 vi.mock('@/store/themeStore', () => ({
@@ -254,6 +255,23 @@ describe('PDF read-only reflow', () => {
     expect(second.container.querySelector('header')!.hasAttribute('inert')).toBe(true);
   });
 
+  it('registers the shared player host, gives nested sheets Back priority, and releases only the host', async () => {
+    const close = vi.fn();
+    const { container, unmount } = render(<PdfReflowDialog bookKey='pdf-1' onClose={close} />);
+    await screen.findByText('第一页正文。');
+    const host = container.querySelector('.pdf-reflow-player-host') as HTMLElement;
+    expect(useTTSPlayerHostStore.getState().hosts['pdf-1']).toBe(host);
+    const sheet = document.createElement('dialog');
+    sheet.open = true;
+    host.append(sheet);
+    expect(eventDispatcher.dispatchSync('native-key-down', { keyName: 'Back' })).toBe(false);
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(close).not.toHaveBeenCalled();
+    sheet.remove();
+    unmount();
+    expect(useTTSPlayerHostStore.getState().hosts['pdf-1']).toBeUndefined();
+  });
+
   it('cleans up native Back and Escape listeners on unmount', () => {
     const close = vi.fn();
     const { unmount } = render(<PdfReflowDialog bookKey='pdf-1' onClose={close} />);
@@ -303,7 +321,9 @@ describe('PDF reflow audio integration', () => {
       });
     });
     expect(container.querySelector('mark')!.textContent).toBe('第一页正文。');
-    expect(screen.getByRole('button', { name: 'Pause' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Pause' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Read Aloud' })).toBeNull();
+    expect(container.querySelector('footer .pdf-reflow-player-host')).toBeTruthy();
     fireEvent.wheel(container.querySelector('article')!);
     expect(screen.getByRole('button', { name: 'Return to Current Speech' })).toBeTruthy();
     await act(async () => {

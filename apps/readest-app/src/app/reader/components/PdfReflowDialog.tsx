@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useTTSPlayerHostStore } from '@/store/ttsPlayerHostStore';
 import { useThemeStore } from '@/store/themeStore';
 import { eventDispatcher } from '@/utils/event';
 import { useReflowNavigation } from '../hooks/useReflowNavigation';
@@ -28,6 +29,14 @@ const PdfReflowDialog = ({ bookKey, initialPage, onClose, onGoToLibrary }: Props
   const [chromeVisible, setChromeVisible] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
+  const playerHostRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const host = playerHostRef.current;
+    if (!host) return;
+    const store = useTTSPlayerHostStore.getState();
+    store.setHost(bookKey, host);
+    return () => store.clearHost(bookKey, host);
+  }, [bookKey]);
   const exiting = useRef(false);
   const pointer = useRef<{
     x: number;
@@ -336,32 +345,19 @@ const PdfReflowDialog = ({ bookKey, initialPage, onClose, onGoToLibrary }: Props
         </nav>
       </article>
       <footer className='pdf-reflow-dock' aria-label={_('Page Navigation')}>
+        <div ref={playerHostRef} className='pdf-reflow-player-host' />
         <div className='pdf-reflow-tts' role='group' aria-label={_('Read Aloud')}>
-          <button
-            type='button'
-            disabled={tts.pending || !count}
-            onClick={() => void tts.toggle()}
-            aria-label={
-              tts.state === 'playing'
-                ? _('Pause')
-                : tts.state === 'paused'
-                  ? _('Resume')
-                  : _('Read Aloud')
-            }
-          >
-            {tts.pending
-              ? _('Loading…')
-              : tts.state === 'playing'
-                ? _('Pause')
-                : tts.state === 'paused'
-                  ? _('Resume')
-                  : _('Read Aloud')}
-          </button>
-          {(tts.state !== 'stopped' || tts.pending) && (
-            <button type='button' onClick={tts.stop}>
-              {_('Stop')}
+          {tts.state === 'stopped' && !tts.pending && (
+            <button
+              type='button'
+              disabled={tts.pending || !count}
+              onClick={() => void tts.toggle()}
+              aria-label={_('Read Aloud')}
+            >
+              {_('Read Aloud')}
             </button>
           )}
+          {tts.pending && <span role='status'>{_('Loading…')}</span>}
           {!tts.following && (tts.state !== 'stopped' || tts.pending) && (
             <button type='button' onClick={tts.returnToSpeech}>
               {_('Return to Current Speech')}
