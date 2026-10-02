@@ -13,7 +13,7 @@
  * surface on the frame it opened.
  */
 
-import { act, cleanup, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { eventDispatcher } from '@/utils/event';
 import type { TextSelection } from '@/utils/sel';
@@ -233,7 +233,11 @@ vi.mock('@/app/reader/components/annotator/ImportAnnotationsDialog', () => ({
   default: () => null,
 }));
 vi.mock('@/app/reader/components/annotator/AnnotationPopup', () => ({
-  default: () => <div data-testid='annotation-toolbar' />,
+  default: ({ buttons }: { buttons: { tooltipText: string; onClick: () => void }[] }) => (
+    <div data-testid='annotation-toolbar'>
+      {buttons.map(button => <button key={button.tooltipText} onClick={button.onClick}>{button.tooltipText}</button>)}
+    </div>
+  ),
 }));
 // The dismiss button stands in for the popup's close / backdrop tap, so a test
 // can drive the route back out of the lookup. Each surface reads its text the
@@ -578,6 +582,25 @@ describe('the instant dictionary dismisses clean unless told to keep the selecti
 });
 
 describe('reflow shares original selection services', () => {
+  test.each([false, true])('disabled quick action opens toolbar and sends selected text to AI (reflow=%s)', async reflow => {
+    h.viewSettings.enableAnnotationQuickActions = true;
+    h.viewSettings.annotationQuickAction = '';
+    const opened = vi.fn();
+    eventDispatcher.on('reading-ai-open', opened);
+    try {
+      render(<Annotator bookKey='book-1' contentInsets={{ top: 0, right: 0, bottom: 0, left: 0 }} />);
+      await selectText();
+      if (reflow) await act(async () => {
+        h.setSelection?.(prev => prev ? { ...prev, reflow: true, reflowQuickAction: undefined } : prev);
+      });
+      expect(screen.getByTestId('annotation-toolbar')).toBeTruthy();
+      fireEvent.click(screen.getByText('AI 解释'));
+      expect(opened).toHaveBeenCalledTimes(1);
+      expect(opened.mock.calls[0]![0].detail).toMatchObject({ bookKey: 'book-1', mode: 'selection', seed: { text: 'selected text', sectionIndex: 0 } });
+      expect(screen.queryByTestId('annotation-toolbar')).toBeNull();
+      expect(h.updateBooknotes).not.toHaveBeenCalled();
+    } finally { eventDispatcher.off('reading-ai-open', opened); }
+  });
   test('stores a proven original CFI with the correct reflow physical page', async () => {
     render(<Annotator bookKey='book-1' contentInsets={{ top: 0, right: 0, bottom: 0, left: 0 }} />);
     await selectText();

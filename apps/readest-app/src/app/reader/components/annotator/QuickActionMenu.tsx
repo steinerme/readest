@@ -11,7 +11,7 @@ import Menu from '@/components/Menu';
 interface QuickActionMenuProps {
   menuClassName?: string;
   selectedAction?: AnnotationToolType | null;
-  onActionSelect: (action: AnnotationToolType) => void;
+  onActionSelect: (action: AnnotationToolType | null) => void;
   setIsDropdownOpen?: (open: boolean) => void;
 }
 
@@ -54,6 +54,14 @@ const QuickActionMenu: React.FC<QuickActionMenuProps> = ({
       )}
       onCancel={() => setIsDropdownOpen?.(false)}
     >
+      <MenuItem
+        label='关闭即时功能 · 恢复选区工具栏'
+        buttonClass={!selectedAction ? 'bg-base-300/85' : ''}
+        onClick={() => {
+          onActionSelect(null);
+          setIsDropdownOpen?.(false);
+        }}
+      />
       {annotationToolQuickActions.map((button) => (
         <MenuItem
           key={button.type}

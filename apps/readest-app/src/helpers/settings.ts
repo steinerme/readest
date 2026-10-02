@@ -70,11 +70,11 @@ export const saveViewSettings = async <K extends keyof ViewSettings>(
     const viewSettings = getViewSettings(bookKey);
     const viewState = getViewState(bookKey);
     if (bookKey && viewSettings && viewSettings[key] !== value) {
-      viewSettings[key] = value;
-      setViewSettings(bookKey, viewSettings);
+      const nextViewSettings = { ...viewSettings, [key]: value };
+      setViewSettings(bookKey, nextViewSettings);
       if (applyStyles) {
         const view = getView(bookKey);
-        view?.renderer.setStyles?.(getStyles(viewSettings));
+        view?.renderer.setStyles?.(getStyles(nextViewSettings));
       }
       const config = getConfig(bookKey);
       if (viewState?.isPrimary && config) {

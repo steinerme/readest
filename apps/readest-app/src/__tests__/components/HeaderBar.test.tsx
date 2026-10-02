@@ -164,6 +164,11 @@ describe('HeaderBar font button', () => {
 });
 
 describe('HeaderBar mobile toolbar stability', () => {
+  it('does not put the AI entry in the crowded header anymore', () => {
+    renderHeader();
+    expect(screen.queryByRole('button', { name: '问这本书' })).toBeNull();
+    expect(screen.queryByText('问 AI')).toBeNull();
+  });
   it('reserves room for the bookmark and translation touch halos inside the scroller', () => {
     setViewport(392, 872);
     const { container } = renderHeader();

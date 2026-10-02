@@ -1,6 +1,6 @@
 import type { LanguageModel, EmbeddingModel } from 'ai';
 
-export type AIProviderName = 'ollama' | 'ai-gateway' | 'openrouter';
+export type AIProviderName = 'ollama' | 'ai-gateway' | 'openrouter' | 'codex';
 
 export interface AIProvider {
   id: AIProviderName;
@@ -33,6 +33,9 @@ export interface AISettings {
   openrouterBaseUrl?: string;
   openrouterModel?: string;
   openrouterEmbeddingModel?: string;
+
+  // OAuth credentials live ONLY in the OS keychain, not settings/sync/backup.
+  codexModel?: string;
 
   spoilerProtection: boolean;
   maxContextChunks: number;

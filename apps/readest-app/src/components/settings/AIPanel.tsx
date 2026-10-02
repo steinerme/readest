@@ -12,6 +12,7 @@ import {
 } from '@/services/ai/providers/OpenRouterProvider';
 import { DEFAULT_AI_SETTINGS, GATEWAY_MODELS, MODEL_PRICING } from '@/services/ai/constants';
 import type { AISettings, AIProviderName } from '@/services/ai/types';
+import CodexOAuthSettings from './CodexOAuthSettings';
 import { exportReedyMetricsBundle } from '@/services/reedy/instrumentation';
 import { isTauriAppPlatform } from '@/services/environment';
 import { BoxedList, SettingLabel, SettingsRow, SettingsSwitchRow } from './primitives';
@@ -412,7 +413,7 @@ const AIPanel: React.FC = () => {
     <div className='my-4 w-full space-y-6'>
       <div className='rounded-xl bg-base-200 p-3 text-sm space-y-2'>
         <p className='font-semibold'>阅读 AI：选中解释 · 问这本书 · 听书助手</p>
-        <p>选中文字 → AI 解释；阅读顶栏 → 问 AI；听书卡片 → AI · 刚才那段。</p>
+        <p>选中文字 → AI 解释；右下悬浮按钮 → 问 AI；听书卡片 → AI · 刚才那段。</p>
         <p>
           先本地检索，再预览原文并确认发送。不会自动上传整本书；不需要 embedding 模型。建议使用
           OpenAI Compatible 自填 API 地址、密钥和模型。
@@ -461,7 +462,24 @@ const AIPanel: React.FC = () => {
             disabled={!enabled}
           />
         </SettingsRow>
+        <SettingsRow label='Codex OAuth · ChatGPT' asLabel>
+          <input
+            type='radio'
+            name='ai-provider'
+            className='radio'
+            checked={provider === 'codex'}
+            onChange={() => setProvider('codex')}
+            disabled={!enabled}
+          />
+        </SettingsRow>
       </BoxedList>
+
+      {provider === 'codex' && (
+        <CodexOAuthSettings
+          model={aiSettings.codexModel}
+          onModelChange={(value) => void saveAiSetting('codexModel', value)}
+        />
+      )}
 
       {provider === 'ollama' && (
         <BoxedList title={_('Ollama Configuration')} className={disabledSection}>

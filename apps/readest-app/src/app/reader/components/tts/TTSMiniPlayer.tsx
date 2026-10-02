@@ -219,6 +219,7 @@ const TTSMiniPlayer = ({
   return (
     <div
       role='status'
+      data-reading-tts-player={visible ? 'visible' : 'hidden'}
       aria-label={`${_('Reading aloud')}: ${book?.title ?? ''}`}
       className={clsx(
         docked

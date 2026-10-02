@@ -232,6 +232,8 @@ function adaptEmbeddingModel(settings: AISettings): ReedyEmbeddingModel {
 
 function embeddingModelIdFor(settings: AISettings): string {
   switch (settings.provider) {
+    case 'codex':
+      throw new Error('Codex OAuth 不提供 embedding；请使用阅读助手本地检索');
     case 'ollama':
       return settings.ollamaEmbeddingModel || 'nomic-embed-text';
     case 'ai-gateway':

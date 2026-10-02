@@ -164,6 +164,16 @@ describe('getBackgroundTextureSettings', () => {
 });
 
 describe('saveViewSettings', () => {
+  test('disabling instant copy uses a new view-settings reference and preserves null', async () => {
+    const previous = { isGlobal: false, annotationQuickAction: 'copy', enableAnnotationQuickActions: true };
+    getViewSettingsMock.mockReturnValue(previous);
+    await saveViewSettings(envConfig, 'book-1', 'annotationQuickAction', null, false, false);
+    const next = setViewSettingsMock.mock.calls[0]![1];
+    expect(next).not.toBe(previous);
+    expect(next.annotationQuickAction).toBeNull();
+    expect(previous.annotationQuickAction).toBe('copy');
+    expect(next.enableAnnotationQuickActions).toBe(true);
+  });
   test('global write swaps the settings reference so replicaSettingsSync subscribers fire', async () => {
     // Mirrors the gating subscriber installed by replicaSettingsSync.initSettingsSync.
     // The publish path is bypassed entirely when this never fires, which is exactly

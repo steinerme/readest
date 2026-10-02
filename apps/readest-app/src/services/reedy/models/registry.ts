@@ -112,6 +112,8 @@ function adaptChatModel(languageModel: import('ai').LanguageModel, id: string): 
 
 function chatModelIdFor(settings: AISettings): string {
   switch (settings.provider) {
+    case 'codex':
+      return settings.codexModel || 'gpt-5.3-codex';
     case 'ollama':
       return settings.ollamaModel || 'llama3.2';
     case 'ai-gateway':
@@ -167,6 +169,8 @@ function adaptEmbeddingModel(
 
 function embeddingModelIdFor(settings: AISettings): string {
   switch (settings.provider) {
+    case 'codex':
+      throw new Error('Codex OAuth 不提供 embedding；请使用阅读助手本地检索');
     case 'ollama':
       return settings.ollamaEmbeddingModel || 'nomic-embed-text';
     case 'ai-gateway':

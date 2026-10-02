@@ -1,3 +1,4 @@
+import { CodexProvider } from './CodexProvider';
 import { OllamaProvider } from './OllamaProvider';
 import { AIGatewayProvider } from './AIGatewayProvider';
 import { OpenRouterProvider } from './OpenRouterProvider';
@@ -7,6 +8,8 @@ export { OllamaProvider, AIGatewayProvider, OpenRouterProvider };
 
 export function getAIProvider(settings: AISettings): AIProvider {
   switch (settings.provider) {
+    case 'codex':
+      return new CodexProvider(settings);
     case 'ollama':
       return new OllamaProvider(settings);
     case 'ai-gateway':

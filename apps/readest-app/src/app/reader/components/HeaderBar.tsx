@@ -38,7 +38,6 @@ import { createPortal } from 'react-dom';
 import { usePdfReflowStore } from '@/store/pdfReflowStore';
 import '@/styles/reader-polish.css';
 import { getPdfRendererPage } from '@/utils/pdfRendererPage';
-import { eventDispatcher } from '@/utils/event';
 
 interface HeaderBarProps {
   bookKey: string;
@@ -143,7 +142,8 @@ const HeaderBar: React.FC<HeaderBarProps> = ({
 
   const handleAnnotationQuickActionSelect = (action: AnnotationToolType | null) => {
     if (viewSettings?.annotationQuickAction === action) action = null;
-    saveViewSettings(envConfig, bookKey, 'annotationQuickAction', action, false, true);
+    void saveViewSettings(envConfig, bookKey, 'annotationQuickAction', action, false, false);
+    handleToggleDropdown(false);
   };
 
   useEffect(() => {
@@ -314,16 +314,6 @@ const HeaderBar: React.FC<HeaderBarProps> = ({
                 {_(isPdfReflowOpen ? 'Switch to PDF' : 'Switch to Reflow')}
               </button>
             )}
-            <button
-              type='button'
-              className='btn btn-ghost h-11 min-h-11 shrink-0 px-2 text-sm'
-              aria-label='问这本书'
-              onClick={() =>
-                void eventDispatcher.dispatch('reading-ai-open', { bookKey, mode: 'book' })
-              }
-            >
-              问 AI
-            </button>
             <BookmarkToggler bookKey={bookKey} />
             <TranslationToggler bookKey={bookKey} />
           </div>
@@ -331,8 +321,8 @@ const HeaderBar: React.FC<HeaderBarProps> = ({
             <Dropdown
               label={
                 annotationQuickAction
-                  ? _('Disable Quick Action')
-                  : _('Enable Quick Action on Selection')
+                  ? '即时功能已开启 · 点击可关闭或切换'
+                  : '即时功能已关闭 · 普通选取显示工具栏'
               }
               className='exclude-title-bar-mousedown dropdown-bottom dropdown-center'
               menuClassName='relative!'

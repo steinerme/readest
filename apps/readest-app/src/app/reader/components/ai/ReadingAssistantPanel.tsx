@@ -306,11 +306,13 @@ export default function ReadingAssistantPanel({ request, onClose }: Props) {
   const references =
     latest && answer === latest.answer ? citedPassages(answer, latest.context.passages) : [];
   const endpoint =
-    ai.provider === 'openrouter'
-      ? ai.openrouterBaseUrl
-      : ai.provider === 'ollama'
-        ? ai.ollamaBaseUrl
-        : 'Vercel AI Gateway';
+    ai.provider === 'codex'
+      ? 'https://chatgpt.com/backend-api/codex'
+      : ai.provider === 'openrouter'
+        ? ai.openrouterBaseUrl
+        : ai.provider === 'ollama'
+          ? ai.ollamaBaseUrl
+          : 'Vercel AI Gateway';
   const destination = safeDestination(endpoint ?? '');
   return (
     <ModalPortal showOverlay={false}>
