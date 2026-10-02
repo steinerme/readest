@@ -187,7 +187,7 @@ describe('PDF reflow as the original reader content mode', () => {
     });
     fireEvent.click(article, { clientX: x, clientY: 200 });
   };
-  it('right and left thirds turn physical pages through the shared service without toggling chrome', async () => {
+  it('right and left quarters turn physical pages through the shared service without toggling chrome', async () => {
     const r = render(<PdfReflowDialog bookKey='pdf-1' onClose={vi.fn()} />);
     await screen.findByText('第一页正文。');
     const article = r.container.querySelector('article')!;
@@ -201,7 +201,24 @@ describe('PDF reflow as the original reader content mode', () => {
     expect(mocks.goTo).toHaveBeenLastCalledWith(0);
     expect(mocks.setHovered).not.toHaveBeenCalled();
   });
-  it('middle third opens and closes the same shared chrome', async () => {
+  it('middle half including both exact boundaries never turns pages or bubbles to another reader', async () => {
+    const outer = vi.fn();
+    const r = render(
+      <div onClick={outer}>
+        <PdfReflowDialog bookKey='pdf-1' onClose={vi.fn()} />
+      </div>,
+    );
+    const text = await screen.findByText('第一页正文。');
+    const article = r.container.querySelector('article')!;
+    tapArticle(article, 400); // establish actual article bounds with a side offset
+    for (const x of [250, 280, 320, 400, 480, 520, 550]) {
+      fireEvent.click(text, { clientX: x, clientY: 200 });
+    }
+    expect(mocks.goTo).not.toHaveBeenCalled();
+    expect(outer).not.toHaveBeenCalled();
+    expect(usePdfReflowStore.getState().sessions['pdf-1']?.page).toBe(0);
+  });
+  it('middle half opens and closes the same shared chrome', async () => {
     mocks.hovered = 'pdf-1';
     const r = render(<PdfReflowDialog bookKey='pdf-1' onClose={vi.fn()} />);
     await screen.findByText('第一页正文。');

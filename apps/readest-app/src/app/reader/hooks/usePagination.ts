@@ -3,6 +3,7 @@ import { useEnv } from '@/context/EnvContext';
 import { FoliateView } from '@/types/view';
 import { ViewSettings } from '@/types/book';
 import { useReaderStore } from '@/store/readerStore';
+import { usePdfReflowStore } from '@/store/pdfReflowStore';
 import { useBookDataStore } from '@/store/bookDataStore';
 import { useDeviceControlStore } from '@/store/deviceStore';
 import { useSettingsStore } from '@/store/settingsStore';
@@ -221,6 +222,15 @@ export const usePagination = (
   const handlePageFlip = async (
     msg: MessageEvent | CustomEvent | React.MouseEvent<HTMLDivElement, MouseEvent>,
   ) => {
+    // The hidden original reader remains mounted for shared services. Its
+    // direct/iframe compatibility clicks must not turn behind the reflow view.
+    // Keyboard and wheel events keep their original ownership.
+    if (
+      usePdfReflowStore.getState().sessions[bookKey] &&
+      (msg.type === 'click' ||
+        (msg instanceof MessageEvent && msg.data?.type === 'iframe-single-click'))
+    )
+      return;
     const viewState = getViewState(bookKey);
     const bookData = getBookData(bookKey);
     if (!viewState?.inited || !bookData) return;

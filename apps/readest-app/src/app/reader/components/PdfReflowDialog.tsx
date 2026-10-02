@@ -426,6 +426,9 @@ const PdfReflowDialog = ({ bookKey, initialPage, onClose, onGoToLibrary }: Props
           }
         }}
         onClick={(e) => {
+          // Portal events can bubble through the React owner tree. Reflow
+          // alone owns its taps; never let the hidden PDF paginate as well.
+          e.stopPropagation();
           const p = pointer.current;
           pointer.current = null;
           if (
@@ -439,11 +442,11 @@ const PdfReflowDialog = ({ bookKey, initialPage, onClose, onGoToLibrary }: Props
           const { left, width } = e.currentTarget.getBoundingClientRect();
           const x = e.clientX - left;
           if (width > 0 && x >= 0 && x <= width) {
-            if (x < width / 3) {
+            if (x < width / 4) {
               if (!busy && page > 0) goPage(page - 1);
               return;
             }
-            if (x > (width * 2) / 3) {
+            if (x > (width * 3) / 4) {
               if (!busy && page < count - 1) goPage(page + 1);
               return;
             }

@@ -4,6 +4,10 @@ import { act, cleanup, renderHook } from '@testing-library/react';
 const h = vi.hoisted(() => ({
   viewSettings: { scrolled: false } as Record<string, unknown>,
   setHoveredBookKey: vi.fn(),
+  reflow: false,
+}));
+vi.mock('@/store/pdfReflowStore', () => ({
+  usePdfReflowStore: { getState: () => ({ sessions: h.reflow ? { 'book-1': {} } : {} }) },
 }));
 
 vi.mock('@/utils/bridge', () => ({
@@ -74,12 +78,13 @@ const setup = () => {
       );
     });
   };
-  return { view, tap };
+  return { view, tap, result };
 };
 
 let postSpy: ReturnType<typeof vi.spyOn>;
 
 beforeEach(() => {
+  h.reflow = false;
   h.viewSettings = { scrolled: false };
   h.setHoveredBookKey.mockClear();
   postSpy = vi.spyOn(window, 'postMessage').mockImplementation(() => {});
@@ -91,6 +96,30 @@ afterEach(() => {
 });
 
 describe('usePagination tap on a page-filling image (#6424)', () => {
+  test('hidden PDF ignores iframe clicks everywhere during reflow, then resumes on closing', async () => {
+    const { view, tap } = setup();
+    h.reflow = true;
+    for (const x of [100, 400, 500, 600, 900]) await tap(x);
+    expect(view.next).not.toHaveBeenCalled();
+    expect(view.prev).not.toHaveBeenCalled();
+    expect(h.setHoveredBookKey).not.toHaveBeenCalled();
+    expect(postSpy).not.toHaveBeenCalled();
+    h.reflow = false;
+    await tap(900);
+    expect(view.next).toHaveBeenCalledOnce();
+  });
+  test('hidden PDF also ignores a direct compatibility click during reflow', async () => {
+    const { view, result } = setup();
+    h.reflow = true;
+    await act(async () => {
+      await result.current.handlePageFlip({ type: 'click', clientX: 900 } as unknown as Parameters<
+        typeof result.current.handlePageFlip
+      >[0]);
+    });
+    expect(view.next).not.toHaveBeenCalled();
+    expect(view.prev).not.toHaveBeenCalled();
+    expect(h.setHoveredBookKey).not.toHaveBeenCalled();
+  });
   test('a tap in the right page-turn zone turns the page', async () => {
     const { view, tap } = setup();
     await tap(900);
