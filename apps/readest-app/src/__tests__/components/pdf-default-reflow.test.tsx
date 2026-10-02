@@ -1,6 +1,8 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import HeaderBar from '@/app/reader/components/HeaderBar';
+import { usePdfReflowStore } from '@/store/pdfReflowStore';
+import { useLayoutEffect } from 'react';
 
 let ready = false;
 let format = 'PDF';
@@ -73,11 +75,22 @@ vi.mock('@/components/ModalPortal', () => ({
   default: ({ children }: { children: import('react').ReactNode }) => <>{children}</>,
 }));
 vi.mock('@/app/reader/components/PdfReflowDialog', () => ({
-  default: ({ initialPage, onClose }: { initialPage?: number; onClose: () => void }) => (
-    <div data-testid='reflow' data-page={initialPage ?? 'saved'}>
-      <button onClick={onClose}>Switch to PDF</button>
-    </div>
-  ),
+  default: ({ initialPage, onClose }: { initialPage?: number; onClose: () => void }) => {
+    useLayoutEffect(() => {
+      const navigate = async () => {};
+      const store = usePdfReflowStore.getState();
+      store.setSession('book-1', {
+        page: initialPage ?? 0,
+        count: 3,
+        close: onClose,
+        navigate,
+        speak: async () => {},
+        returnToSpeech: () => {},
+      });
+      return () => store.clearSession('book-1', navigate);
+    }, []);
+    return <div data-testid='reflow' data-page={initialPage ?? 'saved'} />;
+  },
 }));
 const props = {
   bookKey: 'book-1',
@@ -104,6 +117,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup();
+  usePdfReflowStore.setState({ sessions: {} });
   vi.unstubAllGlobals();
 });
 describe('PDF default reflow', () => {

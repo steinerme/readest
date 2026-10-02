@@ -1,8 +1,13 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useTTSPlayerHostStore } from '@/store/ttsPlayerHostStore';
 import { useThemeStore } from '@/store/themeStore';
 import { eventDispatcher } from '@/utils/event';
-import { useReflowNavigation } from '../hooks/useReflowNavigation';
+import { usePdfReflowStore } from '@/store/pdfReflowStore';
+import { mapReflowSelection } from '@/utils/pdfReflowSelection';
+import { mapPdfSpeechRange } from '@/utils/pdfReflowTTS';
+import { getHighlightColorHex } from '../utils/annotatorUtil';
+import { useSettingsStore } from '@/store/settingsStore';
+import { useEnv } from '@/context/EnvContext';
 import { usePdfReflowTTS } from '../hooks/usePdfReflowTTS';
 import { useBookDataStore } from '@/store/bookDataStore';
 import { useReaderStore } from '@/store/readerStore';
@@ -11,6 +16,7 @@ import { reflowPdfText, type ReflowPage } from '@/utils/pdfReflow';
 import '@/styles/pdf-reflow.css';
 import { readReflowSession, writeReflowSession } from '@/utils/pdfReflowSession';
 import { getPdfRendererPage, isPdfPageVisible } from '@/utils/pdfRendererPage';
+import { getBaseFontFamily } from '@/utils/style';
 
 interface Props {
   bookKey: string;
@@ -21,13 +27,13 @@ interface Props {
   onGoToLibrary?: () => void;
 }
 
-/** Intentionally read-only, page-based reflow. Never creates synthetic CFIs or
- * writes annotations/positions into the original document while reading text. */
+/** Page-based rendering mode inside the existing reader. Chrome, navigation,
+ * settings, bookmarks and notes use the original services. Annotations require
+ * a proven original text-layer Range; never generate CFIs from reflow DOM. */
 const PdfReflowDialog = ({ bookKey, initialPage, onClose, onGoToLibrary }: Props) => {
   const _ = useTranslation();
   const { safeAreaInsets, statusBarHeight, systemUIVisible } = useThemeStore();
-  const [chromeVisible, setChromeVisible] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const { appService } = useEnv();
   const rootRef = useRef<HTMLDivElement>(null);
   const playerHostRef = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
@@ -45,8 +51,14 @@ const PdfReflowDialog = ({ bookKey, initialPage, onClose, onGoToLibrary }: Props
     moved: boolean;
     down: boolean;
   } | null>(null);
-  const { getBookData } = useBookDataStore();
-  const { getView, getProgress } = useReaderStore();
+  const { getBookData, getConfig } = useBookDataStore();
+  const { settings } = useSettingsStore();
+  const config = getConfig(bookKey);
+  const [relocationEpoch, setRelocationEpoch] = useState(0);
+  const { getView, getProgress, getViewSettings, hoveredBookKey, setHoveredBookKey } =
+    useReaderStore();
+  const viewSettings = getViewSettings(bookKey);
+  const view = getView(bookKey);
   const bookDoc = getBookData(bookKey)?.bookDoc;
   const count = bookDoc?.sections.length ?? 0;
   const [saved] = useState(() => readReflowSession(bookKey, count));
@@ -58,9 +70,11 @@ const PdfReflowDialog = ({ bookKey, initialPage, onClose, onGoToLibrary }: Props
       getPdfRendererPage(getView(bookKey)?.renderer) ?? getProgress(bookKey)?.section.current ?? 0;
     return Math.max(0, Math.min(count - 1, Number.isFinite(index) ? index : 0));
   });
-  const [pageInput, setPageInput] = useState(String(page + 1));
-  const [fontSize, setFontSize] = useState(saved?.fontSize ?? 22);
-  const [lineHeight, setLineHeight] = useState(saved?.lineHeight ?? 1.85);
+  const fontSize =
+    (viewSettings?.defaultFontSize ?? 18) *
+    (appService?.isMobile ? 1.25 : 1) *
+    ((viewSettings?.zoomLevel ?? 100) / 100);
+  const lineHeight = viewSettings?.lineHeight ?? 1.85;
   useEffect(() => {
     writeReflowSession(bookKey, { page, fontSize, lineHeight });
   }, [bookKey, page, fontSize, lineHeight]);
@@ -78,7 +92,6 @@ const PdfReflowDialog = ({ bookKey, initialPage, onClose, onGoToLibrary }: Props
 
   useEffect(() => {
     let current = true;
-    setPageInput(String(page + 1));
     setResult(null);
     setBusy(true);
     setError(false);
@@ -122,11 +135,6 @@ const PdfReflowDialog = ({ bookKey, initialPage, onClose, onGoToLibrary }: Props
     if (library) onGoToLibrary?.();
   };
 
-  useReflowNavigation(rootRef, () => {
-    if (settingsOpen) setSettingsOpen(false);
-    else leave(true);
-  });
-
   const returnToOriginal = () => {
     if (exiting.current) return;
     const view = getView(bookKey);
@@ -148,20 +156,227 @@ const PdfReflowDialog = ({ bookKey, initialPage, onClose, onGoToLibrary }: Props
     }
   };
 
-  const goPage = (next: number) => {
-    if (!Number.isInteger(next) || next < 0 || next >= count) {
-      setPageInput(String(page + 1));
-      return;
+  const currentRef = useRef({ page, tts, returnToOriginal });
+  currentRef.current = { page, tts, returnToOriginal };
+  const navigate = useCallback(
+    async (target: number | string) => {
+      const resolved =
+        typeof target === 'number' ? { index: target } : await view?.resolveNavigation(target);
+      const next = resolved?.index;
+      if (next == null || !Number.isInteger(next) || next < 0 || next >= count) return;
+      currentRef.current.tts.suspendFollowing();
+      try {
+        await view?.goTo(target);
+        if (view && !isPdfPageVisible(view.renderer, next))
+          throw new Error('PDF navigation failed');
+        setPage(next);
+      } catch {
+        void eventDispatcher.dispatch('toast', {
+          message: _('Could not return to this PDF page.'),
+          type: 'error',
+        });
+      }
+    },
+    [count, view],
+  );
+
+  useLayoutEffect(() => {
+    const store = usePdfReflowStore.getState();
+    store.setSession(bookKey, {
+      page,
+      count,
+      navigate,
+      close: () => currentRef.current.returnToOriginal(),
+      speak: () => currentRef.current.tts.toggle(),
+      returnToSpeech: () => currentRef.current.tts.returnToSpeech(),
+    });
+  }, [bookKey, page, count, navigate]);
+  useLayoutEffect(
+    () => () => usePdfReflowStore.getState().clearSession(bookKey, navigate),
+    [bookKey, navigate],
+  );
+
+  // The original location is authoritative for services (TOC, bookmarks,
+  // search, annotations, history, TTS). Navigation there updates this mode,
+  // while manual reflow navigation goes through the same view.goTo service.
+  useEffect(() => {
+    if (!view) return;
+    let active = true;
+    let explicitNavigation = false;
+    const onRelocate = () => {
+      setRelocationEpoch((n) => n + 1);
+      const state = currentRef.current.tts;
+      if (!explicitNavigation && state.state !== 'stopped' && !state.following) return;
+      explicitNavigation = false;
+      const next = getPdfRendererPage(view.renderer);
+      if (next != null && next >= 0 && next < count && next !== currentRef.current.page) {
+        setPage(next);
+      }
+    };
+    view.addEventListener('relocate', onRelocate);
+    const onNavigate = (event: CustomEvent) => {
+      if (event.detail?.bookKey === bookKey) {
+        explicitNavigation = true;
+        currentRef.current.tts.suspendFollowing();
+      }
+    };
+    eventDispatcher.on('navigate', onNavigate);
+    if (count && getPdfRendererPage(view.renderer) !== page) {
+      void Promise.resolve(view.goTo(page)).catch(() => {
+        if (active) setError(true);
+      });
     }
-    tts.suspendFollowing();
-    setPage(next);
+    return () => {
+      active = false;
+      view.removeEventListener('relocate', onRelocate);
+      eventDispatcher.off('navigate', onNavigate);
+    };
+  }, [view, bookKey, count]);
+
+  useEffect(() => {
+    let lastRange: Range | null = null;
+    const notifySelection = () => {
+      const selected = window.getSelection();
+      const article = scrollRef.current;
+      if (
+        pointer.current?.down ||
+        !selected?.rangeCount ||
+        selected.isCollapsed ||
+        !article ||
+        !result
+      )
+        return;
+      const visibleRange = selected.getRangeAt(0);
+      if (
+        !article.contains(visibleRange.startContainer) ||
+        !article.contains(visibleRange.endContainer)
+      )
+        return;
+      if (
+        lastRange &&
+        lastRange.startContainer === visibleRange.startContainer &&
+        lastRange.endContainer === visibleRange.endContainer &&
+        lastRange.startOffset === visibleRange.startOffset &&
+        lastRange.endOffset === visibleRange.endOffset
+      )
+        return;
+      lastRange = visibleRange.cloneRange();
+      const doc = view?.renderer.getContents().find((item) => item.index === page)?.doc;
+      const originalRange = doc ? mapReflowSelection(result, article, visibleRange, doc) : null;
+      // Text tools work without a persisted anchor; annotation tools require
+      // an exact original CFI. No synthetic positions are ever saved.
+      void eventDispatcher.dispatch('footnote-selection', {
+        key: bookKey,
+        index: page,
+        range: visibleRange.cloneRange(),
+        cfi: originalRange ? view?.getCFI(page, originalRange) : undefined,
+        reflow: true,
+        originalRange,
+        quickAction: viewSettings?.enableAnnotationQuickActions
+          ? viewSettings.annotationQuickAction
+          : undefined,
+      });
+    };
+    const schedule = () => {
+      clearTimeout(timer);
+      timer = setTimeout(notifySelection, 120);
+    };
+    let timer: ReturnType<typeof setTimeout>;
+    document.addEventListener('selectionchange', schedule);
+    scrollRef.current?.addEventListener('pointerup', schedule);
+    const article = scrollRef.current;
+    return () => {
+      clearTimeout(timer);
+      document.removeEventListener('selectionchange', schedule);
+      article?.removeEventListener('pointerup', schedule);
+      void eventDispatcher.dispatch('footnote-selection', { key: bookKey });
+    };
+  }, [
+    bookKey,
+    page,
+    result,
+    view,
+    viewSettings?.enableAnnotationQuickActions,
+    viewSettings?.annotationQuickAction,
+  ]);
+
+  // Reserve the SAME original chrome's measured height. Footer panels are
+  // absolute children, so include the open panel rather than only the 64px bar.
+  useLayoutEffect(() => {
+    const cell = document.getElementById(`gridcell-${bookKey}`);
+    const root = rootRef.current;
+    if (!cell || !root) return;
+    const measure = () => {
+      const frame = cell.getBoundingClientRect();
+      const header = cell.querySelector<HTMLElement>('.header-bar[data-visible="true"]');
+      const footer = cell.querySelector<HTMLElement>('.footer-bar[data-visible="true"]');
+      const panel = footer?.querySelector<HTMLElement>('[data-state="open"]');
+      const top = header ? Math.max(0, header.getBoundingClientRect().bottom - frame.top) : 0;
+      const bottom = footer
+        ? Math.max(
+            0,
+            frame.bottom -
+              Math.min(
+                footer.getBoundingClientRect().top,
+                panel?.getBoundingClientRect().top ?? Infinity,
+              ),
+          )
+        : 0;
+      root.dataset['chromePanel'] = panel ? 'true' : 'false';
+      root.style.setProperty('--shared-chrome-top', `${top}px`);
+      root.style.setProperty('--shared-chrome-bottom', `${bottom}px`);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    const header = cell.querySelector('.header-bar'),
+      footer = cell.querySelector('.footer-bar');
+    if (header) observer.observe(header);
+    if (footer) {
+      observer.observe(footer);
+      footer.querySelectorAll('[data-state]').forEach((el) => observer.observe(el));
+    }
+    observer.observe(cell);
+    const mutations = new MutationObserver(measure);
+    if (header) mutations.observe(header, { attributes: true, attributeFilter: ['data-visible'] });
+    if (footer)
+      mutations.observe(footer, {
+        attributes: true,
+        subtree: true,
+        attributeFilter: ['data-visible', 'data-state'],
+      });
+    cell.addEventListener('transitionend', measure);
+    return () => {
+      observer.disconnect();
+      mutations.disconnect();
+      cell.removeEventListener('transitionend', measure);
+    };
+  }, [bookKey]);
+
+  const annotations = useMemo(() => {
+    const doc = view?.renderer.getContents().find((item) => item.index === page)?.doc;
+    if (!doc || !result) return [];
+    return (config?.booknotes ?? []).flatMap((note) => {
+      if (note.type !== 'annotation' || note.deletedAt || !note.cfi || !note.style) return [];
+      try {
+        const resolved = view?.resolveCFI(note.cfi);
+        if (resolved?.index !== page || !resolved.anchor) return [];
+        const range = resolved.anchor(doc);
+        if (!range || typeof range.cloneRange !== 'function') return [];
+        return mapPdfSpeechRange(result, range).map((highlight) => ({ ...highlight, note }));
+      } catch {
+        return [];
+      }
+    });
+  }, [config?.booknotes, result, view, page, relocationEpoch]);
+
+  const goPage = (next: number) => {
+    void navigate(next);
   };
 
   return (
     <div
       ref={rootRef}
-      role='dialog'
-      aria-modal='true'
+      role='region'
       aria-label={_('PDF Text Reflow')}
       tabIndex={-1}
       className='pdf-reflow-reader'
@@ -172,79 +387,6 @@ const PdfReflowDialog = ({ bookKey, initialPage, onClose, onGoToLibrary }: Props
         } as import('react').CSSProperties
       }
     >
-      <header
-        className='pdf-reflow-toolbar'
-        data-visible={chromeVisible}
-        aria-hidden={!chromeVisible}
-        inert={!chromeVisible}
-      >
-        <button type='button' onClick={() => leave(true)}>
-          {_('Go to Library')}
-        </button>
-        <button type='button' onClick={returnToOriginal}>
-          {_('Switch to PDF')}
-        </button>
-        <button
-          type='button'
-          aria-label={_('Reflow Settings')}
-          aria-expanded={settingsOpen}
-          onClick={() => setSettingsOpen((v) => !v)}
-        >
-          Aa
-        </button>
-        <button
-          type='button'
-          aria-label={_('Hide Reflow Controls')}
-          onClick={() => {
-            setSettingsOpen(false);
-            setChromeVisible(false);
-            rootRef.current?.focus();
-          }}
-        >
-          ×
-        </button>
-      </header>
-      {settingsOpen && (
-        <section className='pdf-reflow-controls' aria-label={_('Reflow Settings')}>
-          <div className='pdf-reflow-control-row'>
-            <button type='button' onClick={() => setSettingsOpen(false)}>
-              {_('Close Reflow Settings')}
-            </button>
-            <div className='pdf-reflow-font-controls'>
-              <button
-                type='button'
-                aria-label={_('Decrease Reflow Font Size')}
-                disabled={fontSize <= 16}
-                onClick={() => setFontSize((n) => Math.max(16, n - 2))}
-              >
-                A−
-              </button>
-              <output aria-label={_('Font Size')}>{fontSize}</output>
-              <button
-                type='button'
-                aria-label={_('Increase Reflow Font Size')}
-                disabled={fontSize >= 36}
-                onClick={() => setFontSize((n) => Math.min(36, n + 2))}
-              >
-                A＋
-              </button>
-            </div>
-          </div>
-          <label className='pdf-reflow-spacing'>
-            {_('Line Spacing')}
-            <select value={lineHeight} onChange={(e) => setLineHeight(Number(e.target.value))}>
-              <option value={1.5}>1.5</option>
-              <option value={1.85}>1.85</option>
-              <option value={2.2}>2.2</option>
-            </select>
-          </label>
-          <p className='pdf-reflow-notice'>
-            {_(
-              'For single-column text PDFs. Images, tables and formulas are not reconstructed; check the original page when needed.',
-            )}
-          </p>
-        </section>
-      )}
       <article
         ref={scrollRef}
         onPointerDown={(e) => {
@@ -283,15 +425,26 @@ const PdfReflowDialog = ({ bookKey, initialPage, onClose, onGoToLibrary }: Props
         onClick={(e) => {
           const p = pointer.current;
           pointer.current = null;
-          if ((e.target as HTMLElement).closest('button, input, select, a')) return;
+          if (
+            (e.target as HTMLElement).closest('button, input, select, a, [data-reflow-annotation]')
+          )
+            return;
           if (window.getSelection()?.toString()) return;
           if (p && (p.moved || Date.now() - p.time > 450)) return;
-          setSettingsOpen(false);
-          setChromeVisible((v) => !v);
+          setHoveredBookKey(hoveredBookKey === bookKey ? '' : bookKey);
         }}
         className='pdf-reflow-page'
         aria-busy={busy}
-        style={{ fontSize: `${fontSize}px`, lineHeight }}
+        style={{
+          fontSize: `${fontSize}px`,
+          lineHeight,
+          fontFamily: viewSettings?.defaultFont ? getBaseFontFamily(viewSettings) : undefined,
+          fontWeight: viewSettings?.fontWeight,
+          paddingInline: `${Math.max(12, viewSettings?.marginLeftPx ?? 24)}px`,
+          letterSpacing: `${viewSettings?.letterSpacing ?? 0}px`,
+          wordSpacing: `${viewSettings?.wordSpacing ?? 0}px`,
+          textAlign: viewSettings?.fullJustification ? 'justify' : 'start',
+        }}
       >
         {busy && <p role='status'>{_('Loading PDF text…')}</p>}
         {error && (
@@ -310,24 +463,79 @@ const PdfReflowDialog = ({ bookKey, initialPage, onClose, onGoToLibrary }: Props
               </p>
             )}
             {result.blocks.map((block, i) => {
-              const parts: import('react').ReactNode[] = [];
-              let cursor = 0;
-              for (const h of tts.highlights.filter((h) => h.block === i)) {
-                parts.push(block.text.slice(cursor, h.start));
-                parts.push(
-                  <mark data-reflow-tts key={h.start}>
-                    {block.text.slice(h.start, h.end)}
-                  </mark>,
+              const spoken = tts.highlights.filter((h) => h.block === i);
+              const notes = annotations.filter((h) => h.block === i);
+              const points = [
+                ...new Set([
+                  0,
+                  block.text.length,
+                  ...spoken.flatMap((h) => [h.start, h.end]),
+                  ...notes.flatMap((h) => [h.start, h.end]),
+                ]),
+              ].sort((a, b) => a - b);
+              const parts = points.slice(0, -1).map((start, j) => {
+                const end = points[j + 1]!;
+                const speech = spoken.some((h) => start >= h.start && end <= h.end);
+                const annotation = notes.find((h) => start >= h.start && end <= h.end)?.note;
+                const text = block.text.slice(start, end);
+                if (annotation)
+                  return (
+                    <mark
+                      key={start}
+                      data-reflow-tts={speech || undefined}
+                      data-reflow-annotation={annotation.cfi}
+                      style={{
+                        background: speech
+                          ? undefined
+                          : annotation.style === 'highlight'
+                            ? (getHighlightColorHex(settings, annotation.color) ?? '#f8d878')
+                            : 'transparent',
+                        textDecoration: annotation.style !== 'highlight' ? 'underline' : undefined,
+                        textDecorationStyle: annotation.style === 'squiggly' ? 'wavy' : undefined,
+                      }}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        const range = document.createRange();
+                        range.selectNodeContents(event.currentTarget);
+                        void eventDispatcher.dispatch('footnote-selection', {
+                          key: bookKey,
+                          index: page,
+                          range,
+                          cfi: annotation.cfi,
+                          annotated: true,
+                          reflow: true,
+                          originalRange: (() => {
+                            try {
+                              const doc = view?.renderer
+                                .getContents()
+                                .find((item) => item.index === page)?.doc;
+                              return doc ? view?.resolveCFI(annotation.cfi).anchor(doc) : undefined;
+                            } catch {
+                              return undefined;
+                            }
+                          })(),
+                        });
+                      }}
+                    >
+                      {text}
+                    </mark>
+                  );
+                return speech ? (
+                  <mark data-reflow-tts key={start}>
+                    {text}
+                  </mark>
+                ) : (
+                  text
                 );
-                cursor = h.end;
-              }
-              parts.push(block.text.slice(cursor));
+              });
               return block.kind === 'note' ? (
-                <aside className='pdf-reflow-note' key={i}>
+                <aside data-reflow-block={i} className='pdf-reflow-note' key={i}>
                   {parts}
                 </aside>
               ) : (
-                <p key={i}>{parts}</p>
+                <p data-reflow-block={i} key={i}>
+                  {parts}
+                </p>
               );
             })}
           </>
@@ -344,67 +552,14 @@ const PdfReflowDialog = ({ bookKey, initialPage, onClose, onGoToLibrary }: Props
           </button>
         </nav>
       </article>
-      <footer className='pdf-reflow-dock' aria-label={_('Page Navigation')}>
+      <div className='pdf-reflow-listening-dock'>
         <div ref={playerHostRef} className='pdf-reflow-player-host' />
-        <div className='pdf-reflow-tts' role='group' aria-label={_('Read Aloud')}>
-          {tts.state === 'stopped' && !tts.pending && (
-            <button
-              type='button'
-              disabled={tts.pending || !count}
-              onClick={() => void tts.toggle()}
-              aria-label={_('Read Aloud')}
-            >
-              {_('Read Aloud')}
-            </button>
-          )}
-          {tts.pending && <span role='status'>{_('Loading…')}</span>}
-          {!tts.following && (tts.state !== 'stopped' || tts.pending) && (
-            <button type='button' onClick={tts.returnToSpeech}>
-              {_('Return to Current Speech')}
-            </button>
-          )}
-        </div>
-        <button
-          className='pdf-reflow-reveal'
-          type='button'
-          hidden={chromeVisible}
-          aria-label={_('Show Reflow Controls')}
-          onClick={() => setChromeVisible(true)}
-        >
-          {page + 1} / {count} · Aa
-        </button>
-        <form
-          data-visible={chromeVisible}
-          aria-hidden={!chromeVisible}
-          inert={!chromeVisible}
-          className='pdf-reflow-pagination'
-          onSubmit={(e) => {
-            e.preventDefault();
-            goPage(Number(pageInput) - 1);
-          }}
-        >
-          <button type='button' disabled={page <= 0} onClick={() => goPage(page - 1)}>
-            {_('Previous Page')}
+        {!tts.following && tts.state !== 'stopped' && (
+          <button type='button' onClick={tts.returnToSpeech}>
+            {_('Back to Read Aloud')}
           </button>
-          <label>
-            <span className='sr-only'>{_('Original PDF Page')}</span>
-            <input
-              aria-label={_('Original PDF Page')}
-              inputMode='numeric'
-              type='number'
-              min={1}
-              max={count}
-              value={pageInput}
-              onChange={(e) => setPageInput(e.target.value)}
-            />
-            <span> / {count}</span>
-          </label>
-          <button type='submit'>{_('Go')}</button>
-          <button type='button' disabled={page >= count - 1} onClick={() => goPage(page + 1)}>
-            {_('Next Page')}
-          </button>
-        </form>
-      </footer>
+        )}
+      </div>
     </div>
   );
 };

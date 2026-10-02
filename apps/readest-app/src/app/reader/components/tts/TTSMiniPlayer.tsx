@@ -288,7 +288,7 @@ const TTSMiniPlayer = ({
                 )}
               </div>
             </div>
-            {docked && (
+            {
               <button
                 type='button'
                 aria-label={_('Playback settings')}
@@ -300,7 +300,7 @@ const TTSMiniPlayer = ({
                   label={formatRate(viewSettings?.ttsRate ?? 1.0)}
                 />
               </button>
-            )}
+            }
             {timerLabel && (
               <span className='shrink-0 text-xs tabular-nums opacity-70'>{timerLabel}</span>
             )}

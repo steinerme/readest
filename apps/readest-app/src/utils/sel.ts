@@ -59,6 +59,10 @@ export interface TextSelection {
   // section document; tools that need a live main-document range or that
   // cannot work without a CFI must be disabled accordingly.
   popup?: boolean;
+  /** Reflow display selection with a proven original text-layer anchor. */
+  reflow?: boolean;
+  originalRange?: Range;
+  reflowQuickAction?: string;
 }
 
 const frameRect = (frame: Frame, rect?: Rect, sx = 1, sy = 1) => {

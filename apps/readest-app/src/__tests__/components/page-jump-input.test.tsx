@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { render, cleanup, fireEvent } from '@testing-library/react';
 import PageJumpInput from '@/app/reader/components/footerbar/PageJumpInput';
+import { usePdfReflowStore } from '@/store/pdfReflowStore';
 
 interface MockState {
   progress: unknown;
@@ -63,9 +64,32 @@ beforeEach(() => {
   mocks.view.goToFraction.mockClear();
 });
 
-afterEach(() => cleanup());
+afterEach(() => {
+  cleanup();
+  usePdfReflowStore.setState({ sessions: {} });
+});
 
 describe('PageJumpInput', () => {
+  it('uses the same label UI but navigates the active reflow physical page', () => {
+    const navigate = vi.fn().mockResolvedValue(undefined);
+    usePdfReflowStore
+      .getState()
+      .setSession('book1', {
+        page: 44,
+        count: 307,
+        navigate,
+        close: vi.fn(),
+        speak: async () => {},
+        returnToSpeech: vi.fn(),
+      });
+    const { input } = setup({ isFixedLayout: true });
+    expect(input.value).toBe('45 / 307');
+    fireEvent.focus(input);
+    fireEvent.change(input, { target: { value: '120 / 307' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(navigate).toHaveBeenCalledWith(119);
+    expect(mocks.view.goTo).not.toHaveBeenCalled();
+  });
   it('shows the page fraction as its idle label', () => {
     const { input } = setup();
     expect(input.value).toBe('94 / 251');

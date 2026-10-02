@@ -5,6 +5,7 @@ import type { Insets } from '@/types/misc';
 import { useEnv } from '@/context/EnvContext';
 import { useThemeStore } from '@/store/themeStore';
 import { useReaderStore } from '@/store/readerStore';
+import { usePdfReflowStore } from '@/store/pdfReflowStore';
 import { useBookProgress } from '@/store/readerProgressStore';
 import { useSidebarStore } from '@/store/sidebarStore';
 import { useBookDataStore } from '@/store/bookDataStore';
@@ -113,6 +114,7 @@ const BookCellInner: React.FC<BookCellProps> = ({
   // relocate path — so this does NOT reintroduce the commit storm the
   // progress-store split removed.
   const progress = useBookProgress(bookKey);
+  const isReflow = usePdfReflowStore((state) => !!state.sessions[bookKey]);
   const viewState = useReaderStore((s) => s.viewStates[bookKey]);
   const viewSettings = viewState?.viewSettings ?? null;
 
@@ -178,7 +180,12 @@ const BookCellInner: React.FC<BookCellProps> = ({
         An opaque background inside the wrapper keeps the blend backdrop with
         the transformed group, so the drag is luminance-invariant.
       */}
-      <div ref={slideRef} className='bg-base-100 absolute inset-0'>
+      <div
+        ref={slideRef}
+        aria-hidden={isReflow}
+        inert={isReflow}
+        className='bg-base-100 absolute inset-0'
+      >
         <FoliateViewer
           key={viewerKey}
           bookKey={bookKey}
@@ -265,6 +272,10 @@ const BookCellInner: React.FC<BookCellProps> = ({
           />
         )}
       </div>
+      <div
+        id={`reflow-content-${bookKey}`}
+        className='pdf-reflow-content-layer absolute inset-0 z-[5] pointer-events-none'
+      />
       <BookmarkPullDown bookKey={bookKey} ribbonHidden={!!hoveredBookKey} slideRef={slideRef} />
       <PageNavigationButtons bookKey={bookKey} isDropdownOpen={isDropdownOpen} />
       <SearchResultsNav bookKey={bookKey} gridInsets={gridInsets} />

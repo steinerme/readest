@@ -2,9 +2,20 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import PdfReflowDialog from '@/app/reader/components/PdfReflowDialog';
 import { eventDispatcher } from '@/utils/event';
+import { usePdfReflowStore } from '@/store/pdfReflowStore';
 import { useTTSPlayerHostStore } from '@/store/ttsPlayerHostStore';
 
-vi.mock('@/context/EnvContext', () => ({ useEnv: () => ({ appService: { isAndroidApp: true } }) }));
+const mocks = vi.hoisted(() => ({
+  pages: [] as Array<{ getReflowText?: () => Promise<unknown> }>,
+  index: 0,
+  goTo: vi.fn(),
+  hovered: '',
+  setHovered: vi.fn(),
+  settings: { defaultFontSize: 18, lineHeight: 1.85, marginLeftPx: 24 },
+  originalDoc: null as Document | null,
+  notes: [] as import('@/types/book').BookNote[],
+}));
+vi.mock('@/context/EnvContext', () => ({ useEnv: () => ({ appService: { isMobile: true } }) }));
 vi.mock('@/store/themeStore', () => ({
   useThemeStore: () => ({
     safeAreaInsets: { top: 24, bottom: 16 },
@@ -12,45 +23,49 @@ vi.mock('@/store/themeStore', () => ({
     systemUIVisible: true,
   }),
 }));
-vi.mock('@/store/deviceStore', () => ({
-  useDeviceControlStore: () => ({
-    acquireBackKeyInterception: mocks.acquire,
-    releaseBackKeyInterception: mocks.release,
-  }),
-}));
-
-const mocks = vi.hoisted(() => ({
-  pages: [] as Array<{ getReflowText?: () => Promise<unknown> }>,
-  goTo: vi.fn(),
-  acquire: vi.fn(),
-  release: vi.fn(),
-  index: 0,
-}));
 vi.mock('@/hooks/useTranslation', () => ({ useTranslation: () => (s: string) => s }));
-// Return a stable document object, matching the store's contract.
+vi.mock('@/store/settingsStore', () => ({
+  useSettingsStore: () => ({ settings: { globalReadSettings: {} } }),
+}));
 const doc = {
   get sections() {
     return mocks.pages;
   },
 };
 vi.mock('@/store/bookDataStore', () => ({
-  useBookDataStore: () => ({ getBookData: () => ({ bookDoc: doc }) }),
-}));
-vi.mock('@/store/readerStore', () => ({
-  useReaderStore: () => ({
-    getView: () => ({
-      renderer: {
-        get index() {
-          return mocks.index;
-        },
-        getContents: () => [{ index: mocks.index }],
-      },
-      goTo: mocks.goTo,
-    }),
-    getProgress: () => null,
+  useBookDataStore: () => ({
+    getBookData: () => ({ bookDoc: doc }),
+    getConfig: () => ({ booknotes: mocks.notes }),
   }),
 }));
-
+const view = Object.assign(new EventTarget(), {
+  renderer: {
+    get index() {
+      return mocks.index;
+    },
+    getContents: () => [{ index: mocks.index, doc: mocks.originalDoc }],
+  },
+  goTo: (page: number) => mocks.goTo(page),
+  resolveNavigation: (target: string) => ({ index: Number(target) }),
+  getCFI: (index: number, range: Range) => `original-${index}-${range.startOffset}`,
+  resolveCFI: () => ({
+    index: 0,
+    anchor: (doc: Document) => {
+      const range = doc.createRange();
+      range.selectNodeContents(doc.querySelector('span')!);
+      return range;
+    },
+  }),
+});
+vi.mock('@/store/readerStore', () => ({
+  useReaderStore: () => ({
+    getView: () => view,
+    getProgress: () => null,
+    getViewSettings: () => mocks.settings,
+    hoveredBookKey: mocks.hovered,
+    setHoveredBookKey: mocks.setHovered,
+  }),
+}));
 const textPage = (str: string) =>
   Promise.resolve({
     items: [{ str, transform: [14, 0, 0, 14, 60, 700], width: 300, height: 14 }],
@@ -58,59 +73,157 @@ const textPage = (str: string) =>
     height: 792,
     rotation: 0,
   });
+const rangeFor = (text: string) => {
+  const doc = document.implementation.createHTMLDocument('');
+  doc.body.innerHTML = '<div class="textLayer"><span></span></div>';
+  doc.querySelector('span')!.textContent = text;
+  const range = doc.createRange();
+  range.selectNodeContents(doc.querySelector('span')!);
+  return range;
+};
 beforeEach(() => {
   sessionStorage.clear();
   mocks.index = 0;
+  mocks.hovered = '';
+  mocks.setHovered.mockReset();
+  mocks.originalDoc = null;
+  mocks.notes = [];
+  mocks.settings = { defaultFontSize: 18, lineHeight: 1.85, marginLeftPx: 24 };
   mocks.goTo.mockReset().mockImplementation(async (page: number) => {
     mocks.index = page;
+    view.dispatchEvent(new CustomEvent('relocate'));
   });
   mocks.pages = [
     { getReflowText: vi.fn(() => textPage('第一页正文。')) },
     { getReflowText: vi.fn(() => textPage('第二页正文。')) },
   ];
 });
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  usePdfReflowStore.setState({ sessions: {} });
+});
 
-describe('PDF read-only reflow', () => {
-  it('starts at the original physical page and loads just that page', async () => {
-    mocks.index = 1;
+describe('PDF reflow as the original reader content mode', () => {
+  it('reports selected text through shared annotation service with the original range', async () => {
+    mocks.originalDoc = rangeFor('第一页正文。').startContainer.ownerDocument;
     render(<PdfReflowDialog bookKey='pdf-1' onClose={vi.fn()} />);
-    expect(await screen.findByText('第二页正文。')).toBeTruthy();
-    expect(mocks.pages[0]!.getReflowText).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByLabelText('Show Reflow Controls'));
-    expect((screen.getByLabelText('Original PDF Page') as HTMLInputElement).value).toBe('2');
-    expect(mocks.goTo).not.toHaveBeenCalled();
+    const p = await screen.findByText('第一页正文。');
+    const range = document.createRange();
+    range.selectNodeContents(p);
+    window.getSelection()!.removeAllRanges();
+    window.getSelection()!.addRange(range);
+    const report = vi.fn();
+    eventDispatcher.on('footnote-selection', report);
+    try {
+      fireEvent(document, new Event('selectionchange'));
+      await waitFor(() => expect(report).toHaveBeenCalled());
+      expect(report.mock.calls[0]![0].detail).toMatchObject({
+        key: 'pdf-1',
+        index: 0,
+        reflow: true,
+      });
+      expect(report.mock.calls[0]![0].detail.originalRange.startContainer.ownerDocument).toBe(
+        mocks.originalDoc,
+      );
+    } finally {
+      eventDispatcher.off('footnote-selection', report);
+      window.getSelection()!.removeAllRanges();
+    }
   });
-
-  it('adjusts font size without extracting again and returns to the selected original page', async () => {
-    const close = vi.fn();
-    const { container } = render(<PdfReflowDialog bookKey='pdf-1' onClose={close} />);
-    await screen.findByText('第一页正文。');
-    fireEvent.click(screen.getByLabelText('Show Reflow Controls'));
-    fireEvent.click(screen.getByRole('button', { name: 'Reflow Settings' }));
-    fireEvent.click(screen.getByLabelText('Increase Reflow Font Size'));
-    expect(container.querySelector('article')!.style.fontSize).toBe('24px');
-    expect(mocks.pages[0]!.getReflowText).toHaveBeenCalledTimes(1);
-    fireEvent.click(screen.getAllByText('Next Page')[0]!);
-    await screen.findByText('第二页正文。');
-    fireEvent.click(screen.getByText('Switch to PDF'));
-    await waitFor(() => expect(close).toHaveBeenCalledOnce());
-    expect(mocks.goTo).toHaveBeenCalledWith(1);
-  });
-
-  it('shows an empty-page fallback instead of pretending to OCR', async () => {
-    mocks.pages = [
-      { getReflowText: () => Promise.resolve({ items: [], width: 612, height: 792, rotation: 0 }) },
+  it('projects the same stored original annotations and updates after deletion', async () => {
+    mocks.originalDoc = rangeFor('第一页正文。').startContainer.ownerDocument;
+    mocks.notes = [
+      {
+        id: 'note1',
+        type: 'annotation',
+        cfi: 'original-0-0',
+        text: '第一页正文。',
+        style: 'highlight',
+        color: '#ffcc00',
+        note: '',
+        createdAt: 1,
+        updatedAt: 1,
+      },
     ];
-    render(<PdfReflowDialog bookKey='pdf-1' onClose={vi.fn()} />);
-    expect(
-      await screen.findByText(
-        'No usable text on this page. View the original page; OCR is not included.',
-      ),
-    ).toBeTruthy();
+    const r = render(<PdfReflowDialog bookKey='pdf-1' onClose={vi.fn()} />);
+    await screen.findByText('第一页正文。');
+    expect(r.container.querySelector('[data-reflow-annotation]')).toBeTruthy();
+    mocks.notes = [];
+    r.rerender(<PdfReflowDialog bookKey='pdf-1' onClose={vi.fn()} />);
+    expect(r.container.querySelector('[data-reflow-annotation]')).toBeNull();
   });
-
-  it('ignores a stale extraction after changing pages', async () => {
+  it('uses the physical page and does not mount another header/footer or modal', async () => {
+    mocks.index = 1;
+    const { container } = render(<PdfReflowDialog bookKey='pdf-1' onClose={vi.fn()} />);
+    await screen.findByText('第二页正文。');
+    expect(container.querySelector('header')).toBeNull();
+    expect(container.querySelector('footer')).toBeNull();
+    expect(container.querySelector('[aria-modal]')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Read Aloud' })).toBeNull();
+    expect(usePdfReflowStore.getState().sessions['pdf-1']?.page).toBe(1);
+  });
+  it('taps reveal the original shared chrome while scrolling/selection never toggle it', async () => {
+    const { container } = render(<PdfReflowDialog bookKey='pdf-1' onClose={vi.fn()} />);
+    const text = await screen.findByText('第一页正文。');
+    fireEvent.click(text);
+    expect(mocks.setHovered).toHaveBeenCalledWith('pdf-1');
+    mocks.setHovered.mockClear();
+    fireEvent.pointerDown(container.querySelector('article')!, { clientX: 100, clientY: 100 });
+    fireEvent.scroll(container.querySelector('article')!);
+    fireEvent.click(text);
+    expect(mocks.setHovered).not.toHaveBeenCalled();
+  });
+  it('reads the exact same font/line-spacing settings updated by the original panels', async () => {
+    const r = render(<PdfReflowDialog bookKey='pdf-1' onClose={vi.fn()} />);
+    await screen.findByText('第一页正文。');
+    expect(r.container.querySelector('article')!.style.fontSize).toBe('22.5px');
+    mocks.settings.defaultFontSize = 24;
+    mocks.settings.lineHeight = 2.2;
+    r.rerender(<PdfReflowDialog bookKey='pdf-1' onClose={vi.fn()} />);
+    expect(r.container.querySelector('article')!.style.fontSize).toBe('30px');
+    expect(r.container.querySelector('article')!.style.lineHeight).toBe('2.2');
+    expect(mocks.pages[0]!.getReflowText).toHaveBeenCalledTimes(1);
+  });
+  it('manual page navigation moves the original location for bookmarks and other services', async () => {
+    render(<PdfReflowDialog bookKey='pdf-1' onClose={vi.fn()} />);
+    await screen.findByText('第一页正文。');
+    fireEvent.click(screen.getByText('Next Page'));
+    await screen.findByText('第二页正文。');
+    expect(mocks.goTo).toHaveBeenCalledWith(1);
+    expect(usePdfReflowStore.getState().sessions['pdf-1']?.page).toBe(1);
+  });
+  it('original TOC/search/history relocations update visible reflow content', async () => {
+    render(<PdfReflowDialog bookKey='pdf-1' onClose={vi.fn()} />);
+    await screen.findByText('第一页正文。');
+    await act(async () => {
+      await view.goTo(1);
+    });
+    await screen.findByText('第二页正文。');
+  });
+  it('explicit page zero overrides saved page', async () => {
+    const r = render(<PdfReflowDialog bookKey='pdf-1' initialPage={1} onClose={vi.fn()} />);
+    await screen.findByText('第二页正文。');
+    r.unmount();
+    render(<PdfReflowDialog bookKey='pdf-1' initialPage={0} onClose={vi.fn()} />);
+    await screen.findByText('第一页正文。');
+  });
+  it('starts read-aloud through the original session with the exact current physical page', async () => {
+    const speak = vi.fn();
+    eventDispatcher.on('tts-speak', speak);
+    try {
+      render(<PdfReflowDialog bookKey='pdf-1' initialPage={1} onClose={vi.fn()} />);
+      await screen.findByText('第二页正文。');
+      await act(async () => {
+        await usePdfReflowStore.getState().sessions['pdf-1']!.speak();
+      });
+      expect(speak).toHaveBeenCalledWith(
+        expect.objectContaining({ detail: { bookKey: 'pdf-1', index: 1 } }),
+      );
+    } finally {
+      eventDispatcher.off('tts-speak', speak);
+    }
+  });
+  it('ignores stale extraction after rapid navigation', async () => {
     let resolve!: (value: unknown) => void;
     mocks.pages[0] = {
       getReflowText: () =>
@@ -119,197 +232,74 @@ describe('PDF read-only reflow', () => {
         }),
     };
     render(<PdfReflowDialog bookKey='pdf-1' onClose={vi.fn()} />);
-    fireEvent.click(screen.getAllByText('Next Page')[0]!);
+    fireEvent.click(screen.getByText('Next Page'));
     await screen.findByText('第二页正文。');
     await act(async () => {
-      resolve(await textPage('不应出现的旧页。'));
+      resolve(await textPage('旧页不能出现'));
     });
-    expect(screen.queryByText('不应出现的旧页。')).toBeNull();
-    expect(screen.getByText('第二页正文。')).toBeTruthy();
+    expect(screen.queryByText('旧页不能出现')).toBeNull();
   });
-
-  it('escapes PDF content instead of interpreting HTML', async () => {
+  it('escapes PDF content and provides empty-page fallback without OCR', async () => {
     mocks.pages[0] = { getReflowText: () => textPage('<img src=x onerror=alert(1)>') };
-    const { container } = render(<PdfReflowDialog bookKey='pdf-1' onClose={vi.fn()} />);
+    const r = render(<PdfReflowDialog bookKey='pdf-1' onClose={vi.fn()} />);
     await screen.findByText('<img src=x onerror=alert(1)>');
-    expect(container.querySelector('article img')).toBeNull();
+    expect(r.container.querySelector('article img')).toBeNull();
+    r.unmount();
+    mocks.pages[0] = {
+      getReflowText: () => Promise.resolve({ items: [], width: 612, height: 792, rotation: 0 }),
+    };
+    render(<PdfReflowDialog bookKey='pdf-1' onClose={vi.fn()} />);
+    await screen.findByText(
+      'No usable text on this page. View the original page; OCR is not included.',
+    );
   });
-
-  it('closes immediately even if original navigation never resolves', async () => {
-    mocks.goTo.mockImplementation(() => new Promise(() => {}));
+  it('switching back closes immediately, verifies true original page, and never stops audio', async () => {
+    const close = vi.fn(),
+      stopped = vi.fn(),
+      toast = vi.fn();
+    eventDispatcher.on('tts-stop', stopped);
+    eventDispatcher.on('toast', toast);
+    try {
+      render(<PdfReflowDialog bookKey='pdf-1' onClose={close} />);
+      await screen.findByText('第一页正文。');
+      await act(async () => {
+        usePdfReflowStore.getState().sessions['pdf-1']!.close();
+      });
+      expect(close).toHaveBeenCalledOnce();
+      expect(stopped).not.toHaveBeenCalled();
+      expect(toast).not.toHaveBeenCalled();
+    } finally {
+      eventDispatcher.off('tts-stop', stopped);
+      eventDispatcher.off('toast', toast);
+    }
+  });
+  it('a stalled PDF cannot block the switch back to original', async () => {
     const close = vi.fn();
     render(<PdfReflowDialog bookKey='pdf-1' onClose={close} />);
     await screen.findByText('第一页正文。');
-    fireEvent.click(screen.getByLabelText('Show Reflow Controls'));
-    fireEvent.click(screen.getByText('Switch to PDF'));
-    expect(close).toHaveBeenCalledOnce();
-  });
-
-  it('starts without settings and lets all reading controls hide again', async () => {
-    const { container } = render(<PdfReflowDialog bookKey='pdf-1' onClose={vi.fn()} />);
-    await screen.findByText('第一页正文。');
-    expect(container.querySelector('.pdf-reflow-controls')).toBeNull();
-    expect(container.querySelector('header')!.hasAttribute('inert')).toBe(true);
-    fireEvent.click(screen.getByText('第一页正文。'));
-    expect(container.querySelector('header')!.hasAttribute('inert')).toBe(false);
-    fireEvent.click(screen.getByRole('button', { name: 'Reflow Settings' }));
-    expect(container.querySelector('.pdf-reflow-controls')).not.toBeNull();
-    fireEvent.click(screen.getByText('Close Reflow Settings'));
-    expect(container.querySelector('.pdf-reflow-controls')).toBeNull();
-    fireEvent.click(screen.getByLabelText('Hide Reflow Controls'));
-    expect(container.querySelector('header')!.hasAttribute('inert')).toBe(true);
-  });
-
-  it('native Back closes settings first, then goes directly to library using current state', async () => {
-    const close = vi.fn();
-    const library = vi.fn();
-    render(<PdfReflowDialog bookKey='pdf-1' onClose={close} onGoToLibrary={library} />);
-    await screen.findByText('第一页正文。');
-    fireEvent.click(screen.getByLabelText('Show Reflow Controls'));
-    fireEvent.click(screen.getByRole('button', { name: 'Reflow Settings' }));
-    act(() => {
-      expect(eventDispatcher.dispatchSync('native-key-down', { keyName: 'Back' })).toBe(true);
-    });
-    expect(screen.queryByText('Close Reflow Settings')).toBeNull();
-    expect(close).not.toHaveBeenCalled();
-    act(() => {
-      eventDispatcher.dispatchSync('native-key-down', { keyName: 'Back' });
-    });
-    expect(close).toHaveBeenCalledOnce();
-    expect(library).toHaveBeenCalledOnce();
-    expect(mocks.goTo).not.toHaveBeenCalled();
-  });
-
-  it('Escape and repeated native Back exit to library only once, without waiting on PDF', async () => {
     mocks.goTo.mockImplementation(() => new Promise(() => {}));
-    const close = vi.fn();
-    const library = vi.fn();
-    render(<PdfReflowDialog bookKey='pdf-1' onClose={close} onGoToLibrary={library} />);
-    await screen.findByText('第一页正文。');
-    fireEvent.keyDown(window, { key: 'Escape' });
-    act(() => {
-      eventDispatcher.dispatchSync('native-key-down', { keyName: 'Back' });
-    });
+    act(() => usePdfReflowStore.getState().sessions['pdf-1']!.close());
     expect(close).toHaveBeenCalledOnce();
-    expect(library).toHaveBeenCalledOnce();
-    expect(mocks.goTo).not.toHaveBeenCalled();
   });
-
-  it('does not toggle controls after scrolling or while text is selected', async () => {
-    const { container } = render(<PdfReflowDialog bookKey='pdf-1' onClose={vi.fn()} />);
-    const text = await screen.findByText('第一页正文。');
-    const article = container.querySelector('article')!;
-    fireEvent.pointerDown(article, { clientX: 100, clientY: 100 });
-    fireEvent.scroll(article);
-    fireEvent.click(text);
-    expect(container.querySelector('header')!.hasAttribute('inert')).toBe(true);
-    // jsdom selection serialization is incomplete; model a non-empty native
-    // selection while retaining real pointer/scroll handlers above.
-    const selection = vi.spyOn(window, 'getSelection').mockReturnValue({
-      toString: () => '第一页',
-    } as Selection);
-    fireEvent.click(text);
-    expect(container.querySelector('header')!.hasAttribute('inert')).toBe(true);
-    selection.mockRestore();
-  });
-
-  it('shows a navigation error toast without reopening or trapping the reader', async () => {
+  it('actual wrong original page still reports navigation failure', async () => {
     const toast = vi.fn();
     eventDispatcher.on('toast', toast);
-    mocks.goTo.mockRejectedValue(new Error('render failed'));
-    const close = vi.fn();
-    render(<PdfReflowDialog bookKey='pdf-1' onClose={close} />);
-    await screen.findByText('第一页正文。');
-    fireEvent.click(screen.getByLabelText('Show Reflow Controls'));
-    fireEvent.click(screen.getByText('Switch to PDF'));
-    expect(close).toHaveBeenCalledOnce();
-    await waitFor(() => expect(toast).toHaveBeenCalledOnce());
-    eventDispatcher.off('toast', toast);
+    try {
+      render(<PdfReflowDialog bookKey='pdf-1' initialPage={1} onClose={vi.fn()} />);
+      await screen.findByText('第二页正文。');
+      mocks.index = 0;
+      mocks.goTo.mockResolvedValue(undefined);
+      await act(async () => {
+        usePdfReflowStore.getState().sessions['pdf-1']!.close();
+      });
+      await waitFor(() => expect(toast).toHaveBeenCalledOnce());
+    } finally {
+      eventDispatcher.off('toast', toast);
+    }
   });
-
-  it('keeps the original document unchanged when returning to library after changing reflow page', async () => {
-    const library = vi.fn();
-    render(<PdfReflowDialog bookKey='pdf-1' onClose={vi.fn()} onGoToLibrary={library} />);
+  it('follows actual spoken ranges and manual wheel detaches only visual following', async () => {
+    const r = render(<PdfReflowDialog bookKey='pdf-1' onClose={vi.fn()} />);
     await screen.findByText('第一页正文。');
-    fireEvent.click(screen.getAllByText('Next Page')[0]!);
-    await screen.findByText('第二页正文。');
-    act(() => {
-      eventDispatcher.dispatchSync('native-key-down', { keyName: 'Back' });
-    });
-    expect(library).toHaveBeenCalledOnce();
-    expect(mocks.goTo).not.toHaveBeenCalled();
-  });
-
-  it('restores reflow page and font size within this app session after leaving', async () => {
-    const first = render(<PdfReflowDialog bookKey='pdf-1' onClose={vi.fn()} />);
-    await screen.findByText('第一页正文。');
-    fireEvent.click(screen.getAllByText('Next Page')[0]!);
-    await screen.findByText('第二页正文。');
-    fireEvent.click(screen.getByLabelText('Show Reflow Controls'));
-    fireEvent.click(screen.getByRole('button', { name: 'Reflow Settings' }));
-    fireEvent.click(screen.getByLabelText('Increase Reflow Font Size'));
-    first.unmount();
-    const second = render(<PdfReflowDialog bookKey='pdf-1' onClose={vi.fn()} />);
-    await screen.findByText('第二页正文。');
-    expect(second.container.querySelector('article')!.style.fontSize).toBe('24px');
-    expect(second.container.querySelector('header')!.hasAttribute('inert')).toBe(true);
-  });
-
-  it('registers the shared player host, gives nested sheets Back priority, and releases only the host', async () => {
-    const close = vi.fn();
-    const { container, unmount } = render(<PdfReflowDialog bookKey='pdf-1' onClose={close} />);
-    await screen.findByText('第一页正文。');
-    const host = container.querySelector('.pdf-reflow-player-host') as HTMLElement;
-    expect(useTTSPlayerHostStore.getState().hosts['pdf-1']).toBe(host);
-    const sheet = document.createElement('dialog');
-    sheet.open = true;
-    host.append(sheet);
-    expect(eventDispatcher.dispatchSync('native-key-down', { keyName: 'Back' })).toBe(false);
-    fireEvent.keyDown(window, { key: 'Escape' });
-    expect(close).not.toHaveBeenCalled();
-    sheet.remove();
-    unmount();
-    expect(useTTSPlayerHostStore.getState().hosts['pdf-1']).toBeUndefined();
-  });
-
-  it('cleans up native Back and Escape listeners on unmount', () => {
-    const close = vi.fn();
-    const { unmount } = render(<PdfReflowDialog bookKey='pdf-1' onClose={close} />);
-    unmount();
-    expect(eventDispatcher.dispatchSync('native-key-down', { keyName: 'Back' })).toBe(false);
-    fireEvent.keyDown(window, { key: 'Escape' });
-    expect(close).not.toHaveBeenCalled();
-    expect(mocks.release).toHaveBeenCalled();
-  });
-});
-
-describe('PDF reflow audio integration', () => {
-  const rangeFor = (text: string) => {
-    const doc = document.implementation.createHTMLDocument('');
-    doc.body.innerHTML = '<div class="textLayer"><span></span></div>';
-    doc.querySelector('span')!.textContent = text;
-    const range = doc.createRange();
-    range.selectNodeContents(doc.querySelector('span')!);
-    return range;
-  };
-  it('manual entry overrides saved page including explicit page zero, retaining font preferences', async () => {
-    sessionStorage.setItem(
-      'pdf-reflow:pdf-1',
-      JSON.stringify({ page: 1, fontSize: 30, lineHeight: 2.2 }),
-    );
-    // Save via the public component contract rather than relying on session key format.
-    const first = render(<PdfReflowDialog bookKey='pdf-1' initialPage={1} onClose={vi.fn()} />);
-    await screen.findByText('第二页正文。');
-    first.unmount();
-    render(<PdfReflowDialog bookKey='pdf-1' initialPage={0} onClose={vi.fn()} />);
-    await screen.findByText('第一页正文。');
-    expect(screen.queryByText('第二页正文。')).toBeNull();
-  });
-  it('keeps audio controls reachable with chrome hidden and displays real markers across pages', async () => {
-    const { container } = render(<PdfReflowDialog bookKey='pdf-1' onClose={vi.fn()} />);
-    await screen.findByText('第一页正文。');
-    expect(container.querySelector('header')!.hasAttribute('inert')).toBe(true);
-    expect(screen.getByRole('button', { name: 'Read Aloud' })).toBeTruthy();
     await act(async () => {
       await eventDispatcher.dispatch('tts-playback-state', { bookKey: 'pdf-1', state: 'playing' });
       await eventDispatcher.dispatch('tts-position', {
@@ -320,12 +310,9 @@ describe('PDF reflow audio integration', () => {
         range: rangeFor('第一页正文。'),
       });
     });
-    expect(container.querySelector('mark')!.textContent).toBe('第一页正文。');
-    expect(screen.queryByRole('button', { name: 'Pause' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Read Aloud' })).toBeNull();
-    expect(container.querySelector('footer .pdf-reflow-player-host')).toBeTruthy();
-    fireEvent.wheel(container.querySelector('article')!);
-    expect(screen.getByRole('button', { name: 'Return to Current Speech' })).toBeTruthy();
+    expect(r.container.querySelector('mark')!.textContent).toBe('第一页正文。');
+    fireEvent.wheel(r.container.querySelector('article')!);
+    expect(screen.getByText('Back to Read Aloud')).toBeTruthy();
     await act(async () => {
       await eventDispatcher.dispatch('tts-position', {
         bookKey: 'pdf-1',
@@ -336,58 +323,24 @@ describe('PDF reflow audio integration', () => {
       });
     });
     expect(screen.queryByText('第二页正文。')).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'Return to Current Speech' }));
-    await waitFor(() => expect(container.querySelector('mark')!.textContent).toBe('第二页正文。'));
-    fireEvent.click(screen.getByLabelText('Show Reflow Controls'));
+    fireEvent.click(screen.getByText('Back to Read Aloud'));
+    await waitFor(() =>
+      expect(r.container.querySelector('mark')!.textContent).toBe('第二页正文。'),
+    );
+  });
+  it('unmount releases only visual host/navigation and leaves original session ownership alone', async () => {
     const stopped = vi.fn();
     eventDispatcher.on('tts-stop', stopped);
-    fireEvent.click(screen.getByText('Switch to PDF'));
-    expect(stopped).not.toHaveBeenCalled();
-    eventDispatcher.off('tts-stop', stopped);
-  });
-});
-
-describe('PDF return navigation verification', () => {
-  it('does not emit a failure toast when fixed-layout index reaches page zero', async () => {
-    const toast = vi.fn();
-    eventDispatcher.on('toast', toast);
     try {
-      render(<PdfReflowDialog bookKey='pdf-1' initialPage={0} onClose={vi.fn()} />);
+      const r = render(<PdfReflowDialog bookKey='pdf-1' onClose={vi.fn()} />);
       await screen.findByText('第一页正文。');
-      fireEvent.click(screen.getByLabelText('Show Reflow Controls'));
-      await act(async () => {
-        fireEvent.click(screen.getByText('Switch to PDF'));
-      });
-      expect(mocks.goTo).toHaveBeenCalledWith(0);
-      expect(toast).not.toHaveBeenCalled();
+      expect(useTTSPlayerHostStore.getState().hosts['pdf-1']).toBeTruthy();
+      r.unmount();
+      expect(useTTSPlayerHostStore.getState().hosts['pdf-1']).toBeUndefined();
+      expect(usePdfReflowStore.getState().sessions['pdf-1']).toBeUndefined();
+      expect(stopped).not.toHaveBeenCalled();
     } finally {
-      eventDispatcher.off('toast', toast);
+      eventDispatcher.off('tts-stop', stopped);
     }
-  });
-  it('still reports an actual failed navigation when the active PDF page remains different', async () => {
-    const toast = vi.fn();
-    eventDispatcher.on('toast', toast);
-    try {
-      mocks.goTo.mockResolvedValue(undefined);
-      render(<PdfReflowDialog bookKey='pdf-1' initialPage={1} onClose={vi.fn()} />);
-      await screen.findByText('第二页正文。');
-      fireEvent.click(screen.getByLabelText('Show Reflow Controls'));
-      await act(async () => {
-        fireEvent.click(screen.getByText('Switch to PDF'));
-      });
-      expect(toast).toHaveBeenCalledOnce();
-    } finally {
-      eventDispatcher.off('toast', toast);
-    }
-  });
-  it('keeps transport and page controls together outside the scrolling article', async () => {
-    const { container } = render(<PdfReflowDialog bookKey='pdf-1' onClose={vi.fn()} />);
-    await screen.findByText('第一页正文。');
-    const dock = container.querySelector('footer.pdf-reflow-dock')!;
-    expect(dock.contains(screen.getByRole('button', { name: 'Read Aloud' }))).toBe(true);
-    expect(dock.contains(screen.getByLabelText('Show Reflow Controls'))).toBe(true);
-    expect(container.querySelector('article')!.contains(dock)).toBe(false);
-    fireEvent.click(screen.getByLabelText('Show Reflow Controls'));
-    expect(dock.contains(screen.getByLabelText('Original PDF Page'))).toBe(true);
   });
 });

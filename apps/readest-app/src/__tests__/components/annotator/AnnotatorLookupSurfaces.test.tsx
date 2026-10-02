@@ -576,3 +576,50 @@ describe('the instant dictionary dismisses clean unless told to keep the selecti
     expect(screen.queryByTestId('annotation-toolbar')).toBeNull();
   });
 });
+
+describe('reflow shares original selection services', () => {
+  test('stores a proven original CFI with the correct reflow physical page', async () => {
+    render(<Annotator bookKey='book-1' contentInsets={{ top: 0, right: 0, bottom: 0, left: 0 }} />);
+    await selectText();
+    await act(async () => {
+      h.setSelection?.((prev) => (prev ? { ...prev, reflow: true, page: 45 } : prev));
+    });
+    act(() => {
+      expect(h.actions?.['onHighlightSelection']?.()).toBe(true);
+    });
+    expect(h.config.booknotes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ cfi: 'epubcfi(/6/2!/4/2)', page: 45, text: 'selected text' }),
+      ]),
+    );
+  });
+  test('reads from the actual original Range, not the display DOM', async () => {
+    render(<Annotator bookKey='book-1' contentInsets={{ top: 0, right: 0, bottom: 0, left: 0 }} />);
+    await selectText();
+    const originalDoc = document.implementation.createHTMLDocument('');
+    originalDoc.body.textContent = 'selected text';
+    const range = originalDoc.createRange();
+    range.selectNodeContents(originalDoc.body);
+    await act(async () => {
+      h.setSelection?.((prev) =>
+        prev ? { ...prev, reflow: true, originalRange: range, index: 44 } : prev,
+      );
+    });
+    const speak = vi.fn();
+    eventDispatcher.on('tts-speak', speak);
+    try {
+      act(() => {
+        expect(h.actions?.['onReadAloudSelection']?.()).toBe(true);
+      });
+      expect(speak).toHaveBeenCalledWith(
+        expect.objectContaining({
+          detail: expect.objectContaining({ bookKey: 'book-1', index: 44, oneTime: true }),
+        }),
+      );
+      const used = speak.mock.calls[0]![0].detail.range as Range;
+      expect(used.startContainer.ownerDocument).toBe(originalDoc);
+    } finally {
+      eventDispatcher.off('tts-speak', speak);
+    }
+  });
+});

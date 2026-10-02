@@ -178,13 +178,14 @@ describe('TTSControl', () => {
     expect(host.contains(screen.getByTestId('mini-player'))).toBe(true);
     expect(container.querySelector('[data-testid="mini-player"]')).toBeNull();
     fireEvent.click(screen.getByTestId('mini-player'));
-    expect(host.contains(screen.getByTestId('player-sheet'))).toBe(true);
+    expect(host.contains(screen.getByTestId('player-sheet'))).toBe(false);
+    expect(screen.getByTestId('player-sheet').closest('[data-capture-blocking-overlay]')).toBeTruthy();
     fireEvent.click(screen.getByText('Rate 1.5'));
     fireEvent.click(screen.getByText('Seek 42'));
     expect(ttsState['handleSetRate']).toHaveBeenCalledWith(1.5);
     expect(ttsState['handleSeekTo']).toHaveBeenCalledWith(42);
     act(() => useTTSPlayerHostStore.getState().clearHost('b1', host));
-    expect(container.contains(screen.getByTestId('player-sheet'))).toBe(true);
+    expect(screen.getByTestId('player-sheet')).toBeTruthy();
     expect(host.childElementCount).toBe(0);
     fireEvent.click(screen.getByText('Close Player'));
     expect(container.contains(screen.getByTestId('mini-player'))).toBe(true);

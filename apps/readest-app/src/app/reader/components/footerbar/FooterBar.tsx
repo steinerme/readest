@@ -17,6 +17,7 @@ import MobileFooterBar from './MobileFooterBar';
 import DesktopFooterBar from './DesktopFooterBar';
 import { getFooterBarPosition } from './position';
 import TTSControl from '../tts/TTSControl';
+import { usePdfReflowStore } from '@/store/pdfReflowStore';
 
 const FooterBar: React.FC<FooterBarProps> = ({
   bookKey,
@@ -34,6 +35,7 @@ const FooterBar: React.FC<FooterBarProps> = ({
   const { isSideBarVisible, isSideBarPinned, setSideBarVisible } = useSidebarStore();
   const { acquireBackKeyInterception, releaseBackKeyInterception } = useDeviceControlStore();
 
+  const reflow = usePdfReflowStore((state) => state.sessions[bookKey]);
   const view = getView(bookKey);
   const config = getConfig(bookKey);
   const bookData = getBookData(bookKey);
@@ -48,8 +50,13 @@ const FooterBar: React.FC<FooterBarProps> = ({
   const pointerInDoc = docs.some(({ doc }) => doc?.body?.style.cursor === 'pointer');
 
   const progressInfo = useMemo(
-    () => (FIXED_LAYOUT_FORMATS.has(bookFormat) ? section : pageinfo),
-    [bookFormat, section, pageinfo],
+    () =>
+      reflow
+        ? { current: reflow.page, total: reflow.count }
+        : FIXED_LAYOUT_FORMATS.has(bookFormat)
+          ? section
+          : pageinfo,
+    [bookFormat, section, pageinfo, reflow?.page, reflow?.count],
   );
 
   const progressValid = !!progressInfo && progressInfo.total > 0 && progressInfo.current >= 0;
@@ -63,41 +70,54 @@ const FooterBar: React.FC<FooterBarProps> = ({
   const handleProgressChange = useMemo(
     () =>
       debounce((value: number) => {
-        view?.goToFraction(value / 100.0);
+        if (reflow)
+          void reflow.navigate(
+            Math.min(reflow.count - 1, Math.max(0, Math.round((value / 100) * (reflow.count - 1)))),
+          );
+        else view?.goToFraction(value / 100.0);
       }, 100),
-    [view],
+    [view, reflow],
   );
 
   const handleGoPrevPage = useCallback(() => {
-    view?.renderer.prev();
-  }, [view]);
+    if (reflow) void reflow.navigate(reflow.page - 1);
+    else view?.renderer.prev();
+  }, [view, reflow]);
 
   const handleGoNextPage = useCallback(() => {
-    view?.renderer.next();
-  }, [view]);
+    if (reflow) void reflow.navigate(reflow.page + 1);
+    else view?.renderer.next();
+  }, [view, reflow]);
 
   const handleGoPrevSection = useCallback(() => {
-    view?.renderer.prevSection?.();
-  }, [view]);
+    if (reflow) void reflow.navigate(reflow.page - 1);
+    else view?.renderer.prevSection?.();
+  }, [view, reflow]);
 
   const handleGoNextSection = useCallback(() => {
-    view?.renderer.nextSection?.();
-  }, [view]);
+    if (reflow) void reflow.navigate(reflow.page + 1);
+    else view?.renderer.nextSection?.();
+  }, [view, reflow]);
 
   const handleGoBack = useCallback(() => {
+    void eventDispatcher.dispatch('navigate', { bookKey });
     view?.history.back();
-  }, [view]);
+  }, [view, bookKey]);
 
   const handleGoForward = useCallback(() => {
+    void eventDispatcher.dispatch('navigate', { bookKey });
     view?.history.forward();
-  }, [view]);
+  }, [view, bookKey]);
 
   const handleSpeakText = useCallback(async () => {
     if (!view || !progress || !viewState) return;
 
     const eventType = viewState.ttsEnabled ? 'tts-stop' : 'tts-speak';
-    eventDispatcher.dispatch(eventType, { bookKey });
-  }, [view, progress, viewState, bookKey]);
+    eventDispatcher.dispatch(eventType, {
+      bookKey,
+      ...(reflow && !viewState.ttsEnabled ? { index: reflow.page } : {}),
+    });
+  }, [view, progress, viewState, bookKey, reflow]);
 
   const handleSetActionTab = useCallback(
     (tab: string) => {

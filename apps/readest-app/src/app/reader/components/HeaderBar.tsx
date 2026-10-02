@@ -34,6 +34,8 @@ import TranslationToggler from './TranslationToggler';
 import ViewMenu from './ViewMenu';
 import SyncInfoDialog from './SyncInfoDialog';
 import PdfReflowDialog from './PdfReflowDialog';
+import { createPortal } from 'react-dom';
+import { usePdfReflowStore } from '@/store/pdfReflowStore';
 import '@/styles/reader-polish.css';
 import { getPdfRendererPage } from '@/utils/pdfRendererPage';
 
@@ -89,6 +91,11 @@ const HeaderBar: React.FC<HeaderBarProps> = ({
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [isMetaHashDialogOpen, setIsMetaHashDialogOpen] = useState(false);
   const [isPdfReflowOpen, setIsPdfReflowOpen] = useState(false);
+  const reflow = usePdfReflowStore((state) => state.sessions[bookKey]);
+  const togglePdfMode = () => {
+    if (isPdfReflowOpen) reflow?.close();
+    else openPdfReflow();
+  };
   const [reflowInitialPage, setReflowInitialPage] = useState<number | undefined>();
   const defaultReflowBook = useRef<string | null>(null);
   const [headerWidth, setHeaderWidth] = useState(0);
@@ -300,10 +307,10 @@ const HeaderBar: React.FC<HeaderBarProps> = ({
               <button
                 type='button'
                 className='btn btn-ghost min-h-11 h-11 shrink-0 px-2 text-sm'
-                aria-label={_('Switch to Reflow')}
-                onClick={openPdfReflow}
+                aria-label={_(isPdfReflowOpen ? 'Switch to PDF' : 'Switch to Reflow')}
+                onClick={togglePdfMode}
               >
-                {_('Switch to Reflow')}
+                {_(isPdfReflowOpen ? 'Switch to PDF' : 'Switch to Reflow')}
               </button>
             )}
             <BookmarkToggler bookKey={bookKey} />
@@ -380,20 +387,23 @@ const HeaderBar: React.FC<HeaderBarProps> = ({
             <ViewMenu
               bookKey={bookKey}
               onShowMetaHashDialog={() => setIsMetaHashDialogOpen(true)}
-              onOpenPdfReflow={openPdfReflow}
+              onOpenPdfReflow={togglePdfMode}
+              pdfReflowActive={isPdfReflowOpen}
+              setIsDropdownOpen={setIsDropdownOpen}
             />
           </Dropdown>
-          {isPdfReflowOpen && bookData?.book?.format === 'PDF' && (
-            <ModalPortal showOverlay={false}>
+          {isPdfReflowOpen &&
+            bookData?.book?.format === 'PDF' &&
+            createPortal(
               <PdfReflowDialog
                 key={bookKey}
                 bookKey={bookKey}
                 initialPage={reflowInitialPage}
                 onClose={() => setIsPdfReflowOpen(false)}
                 onGoToLibrary={onGoToLibrary}
-              />
-            </ModalPortal>
-          )}
+              />,
+              document.getElementById(`reflow-content-${bookKey}`) ?? document.body,
+            )}
           {isMetaHashDialogOpen && (
             <ModalPortal showOverlay={false}>
               <SyncInfoDialog

@@ -1,6 +1,8 @@
 .pdf-reflow-reader {
   position: absolute;
   inset: 0;
+  padding-top: var(--shared-chrome-top, 0px);
+  padding-bottom: var(--shared-chrome-bottom, 0px);
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -11,64 +13,6 @@
   --safe-top: max(var(--reflow-safe-top, 0px), env(safe-area-inset-top));
   --safe-bottom: max(var(--reflow-safe-bottom, 0px), env(safe-area-inset-bottom));
 }
-.pdf-reflow-controls {
-  position: absolute;
-  z-index: 3;
-  inset-inline: 12px;
-  bottom: calc(76px + var(--safe-bottom));
-  max-height: calc(100% - var(--safe-top) - var(--safe-bottom) - 144px);
-  overflow-y: auto;
-  padding: 16px 20px;
-  border: 1px solid var(--color-base-300);
-  border-radius: 18px;
-  background: var(--color-base-100);
-  box-shadow: 0 8px 30px rgb(0 0 0 / 0.12);
-}
-.pdf-reflow-control-row,
-.pdf-reflow-font-controls,
-.pdf-reflow-pagination {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-.pdf-reflow-reader button:not(.pdf-reflow-player-host *),
-.pdf-reflow-reader select:not(.pdf-reflow-player-host *),
-.pdf-reflow-pagination input {
-  min-height: 44px;
-  border: 1px solid var(--color-base-300);
-  border-radius: 10px;
-  padding: 6px 10px;
-  color: inherit;
-  background: var(--color-base-100);
-  font-size: 14px;
-}
-.pdf-reflow-reader button:not(.pdf-reflow-player-host *):disabled {
-  opacity: 0.4;
-  cursor: default;
-}
-.pdf-reflow-reader button:not(.pdf-reflow-player-host *):focus-visible,
-.pdf-reflow-reader input:focus-visible,
-.pdf-reflow-reader select:not(.pdf-reflow-player-host *):focus-visible {
-  outline: 2px solid var(--color-primary) !important;
-  outline-offset: 2px;
-}
-.pdf-reflow-font-controls button {
-  min-width: 44px;
-}
-.pdf-reflow-spacing {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-block-start: 8px;
-  font-size: 13px;
-}
-.pdf-reflow-notice {
-  font-size: 12px;
-  line-height: 1.6;
-  margin-top: 8px;
-  opacity: 0.7;
-}
 .pdf-reflow-page {
   flex: 1 1 0;
   min-height: 0;
@@ -76,10 +20,11 @@
   overflow-y: auto;
   overscroll-behavior: contain;
   touch-action: pan-y;
-  padding: calc(24px + var(--safe-top)) max(24px, calc((100% - 700px) / 2)) 24px;
+  padding: calc(24px + var(--safe-top)) 24px calc(24px + var(--safe-bottom));
   overflow-wrap: anywhere;
   user-select: text;
   -webkit-user-select: text;
+  scroll-padding-block: calc(44px + var(--safe-top)) calc(64px + var(--safe-bottom));
 }
 .pdf-reflow-page p {
   margin: 0 0 1.15em;
@@ -98,156 +43,49 @@
   padding: 12px;
   border: 1px solid var(--color-base-300);
 }
-.pdf-reflow-toolbar,
-.pdf-reflow-pagination {
-  position: absolute;
-  z-index: 2;
-  inset-inline: 0;
-  background: var(--color-base-100);
-  opacity: 0;
-  visibility: hidden;
-  pointer-events: none;
-  transition:
-    opacity 160ms ease-out,
-    transform 200ms ease-out,
-    visibility 0s linear 200ms;
-}
-.pdf-reflow-toolbar {
-  top: 0;
-  display: flex;
-  gap: 6px;
-  justify-content: space-between;
-  padding: calc(8px + var(--safe-top)) 12px 8px;
-  border-bottom: 1px solid var(--color-base-300);
-  transform: translateY(-8px);
-}
-.pdf-reflow-toolbar button {
-  min-width: 44px;
-  border: 0;
-  padding-inline: 8px;
-}
-.pdf-reflow-toolbar[data-visible='true'],
-.pdf-reflow-pagination[data-visible='true'] {
-  opacity: 1;
-  visibility: visible;
-  pointer-events: auto;
-  transform: translateY(0);
-  transition-delay: 0s;
-}
-.pdf-reflow-dock {
-  flex: 0 0 auto;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  padding: 8px 12px calc(8px + var(--safe-bottom));
-  border-top: 1px solid var(--color-base-300);
-  background: var(--color-base-100);
-}
-.pdf-reflow-reveal {
-  margin-inline-start: auto;
-  opacity: 0.8;
-}
-.pdf-reflow-reveal[hidden] {
-  display: none;
-}
 .pdf-reflow-end-navigation {
   display: flex;
   gap: 12px;
   justify-content: space-between;
   align-items: center;
+  font-family: var(--font-sans);
   font-size: 13px;
   margin-block: 24px;
 }
-.pdf-reflow-dock .pdf-reflow-pagination {
-  position: static;
-  display: none;
-  flex: 0 0 100%;
-  opacity: 1;
-  visibility: visible;
-  transform: none;
-  transition: none;
-  padding: 8px 0 0;
-  border-top: 1px solid var(--color-base-300);
-  flex-wrap: wrap;
-  justify-content: center;
+.pdf-reflow-end-navigation button {
+  min-height: 44px;
+  padding: 6px 10px;
+  border: 1px solid var(--color-base-300);
+  border-radius: 10px;
 }
-.pdf-reflow-dock .pdf-reflow-pagination[data-visible='true'] {
-  display: flex;
+.pdf-reflow-listening-dock {
+  flex: 0 0 auto;
+  padding: 8px 12px calc(8px + var(--safe-bottom));
+  background: var(--color-base-100);
 }
-.pdf-reflow-pagination input {
-  width: 65px;
-  text-align: center;
-}
-@media (max-height: 550px) {
-  .pdf-reflow-notice {
-    display: none;
-  }
-  .pdf-reflow-controls {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-  }
-  .pdf-reflow-spacing {
-    margin: 0;
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .pdf-reflow-toolbar,
-  .pdf-reflow-pagination {
-    transition: none;
-  }
-}
-html[data-eink='true'] .pdf-reflow-toolbar,
-html[data-eink='true'] .pdf-reflow-pagination {
-  transition: none;
-}
-html[data-eink='true'] .pdf-reflow-controls {
-  box-shadow: none;
-}
-html[data-eink='true'] .pdf-reflow-reader button:not(.pdf-reflow-player-host *):disabled {
-  opacity: 1;
-  color: var(--color-base-content);
-  border-style: dashed;
-}
-
-/* The original player occupies real footer height, never overlays the article.
-   Its sheet stays in this overlay's stacking context and uses its own styling. */
-.pdf-reflow-player-host {
-  flex: 0 0 100%;
-  min-width: 0;
-  font-family: var(--font-sans);
-}
-.pdf-reflow-player-host:empty {
+.pdf-reflow-listening-dock:has(.pdf-reflow-player-host:empty):not(:has(button)) {
   display: none;
 }
-
-/* Read-aloud transport stays reachable when the reading chrome is hidden. */
-.pdf-reflow-tts {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 6px;
-}
-.pdf-reflow-tts button {
-  pointer-events: auto;
-  box-shadow: 0 2px 12px rgb(0 0 0 / 0.12);
-  font-size: 13px;
-}
+.pdf-reflow-player-host { min-width: 0; font-family: var(--font-sans); }
+.pdf-reflow-player-host:empty { display: none; }
 .pdf-reflow-page mark[data-reflow-tts] {
   color: inherit;
   background: color-mix(in srgb, var(--color-primary) 24%, var(--color-base-100));
   border-radius: 3px;
   box-decoration-break: clone;
   -webkit-box-decoration-break: clone;
-  scroll-margin-block: calc(96px + var(--safe-top)) 24px;
+  scroll-margin-block: calc(60px + var(--safe-top)) calc(64px + var(--safe-bottom));
+}
+@media (max-height: 550px) {
+  .pdf-reflow-reader[data-chrome-panel='true'] .pdf-reflow-page {
+    padding-block: 4px;
+  }
+  .pdf-reflow-reader[data-chrome-panel='true'] .pdf-reflow-listening-dock {
+    padding-block: 4px;
+  }
 }
 html[data-eink='true'] .pdf-reflow-page mark[data-reflow-tts] {
   background: transparent;
   text-decoration: underline;
   text-decoration-thickness: 2px;
-}
-html[data-eink='true'] .pdf-reflow-tts button {
-  box-shadow: none;
 }

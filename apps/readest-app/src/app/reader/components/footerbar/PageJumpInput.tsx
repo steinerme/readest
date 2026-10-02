@@ -1,6 +1,7 @@
 import clsx from 'clsx';
 import React, { useEffect, useRef, useState } from 'react';
 import { useReaderStore } from '@/store/readerStore';
+import { usePdfReflowStore } from '@/store/pdfReflowStore';
 import { useTranslation } from '@/hooks/useTranslation';
 import { useBookDataStore } from '@/store/bookDataStore';
 import { formatProgress, getReferencePageInfo } from '@/utils/progress';
@@ -24,6 +25,7 @@ const PageJumpInput: React.FC<PageJumpInputProps> = ({ bookKey, showFraction, cl
   const _ = useTranslation();
   const { hoveredBookKey, getView, getProgress, getViewSettings } = useReaderStore();
   const { getBookData } = useBookDataStore();
+  const reflow = usePdfReflowStore((state) => state.sessions[bookKey]);
   const view = getView(bookKey);
   const bookData = getBookData(bookKey);
   const progress = getProgress(bookKey);
@@ -54,7 +56,11 @@ const PageJumpInput: React.FC<PageJumpInputProps> = ({ bookKey, showFraction, cl
   }, [hoveredBookKey, bookKey]);
 
   const { section, pageinfo } = progress || {};
-  const pageInfo = bookData?.isFixedLayout ? section : pageinfo;
+  const pageInfo = reflow
+    ? { current: reflow.page, total: reflow.count }
+    : bookData?.isFixedLayout
+      ? section
+      : pageinfo;
   const progressValid = !!pageInfo && pageInfo.total > 0 && pageInfo.current >= 0;
   if (!progressValid) return null;
 
@@ -84,6 +90,8 @@ const PageJumpInput: React.FC<PageJumpInputProps> = ({ bookKey, showFraction, cl
       const href = findReferencePageHref(bookData?.bookDoc?.pageList, target);
       if (href) view.goTo(href);
       else view.goToFraction(fractionForPage(target, total));
+    } else if (reflow) {
+      void reflow.navigate(target - 1);
     } else if (bookData?.isFixedLayout) {
       view.goTo(target - 1);
     } else {

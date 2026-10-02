@@ -46,7 +46,7 @@ export const FontLayoutPanel: React.FC<FontLayoutPanelProps> = ({
 }) => {
   const _ = useTranslation();
   const { envConfig, appService } = useEnv();
-  const { getView, getViewSettings, setHoveredBookKey } = useReaderStore();
+  const { getView, getViewSettings, setViewSettings, setHoveredBookKey } = useReaderStore();
   const { setSettingsDialogBookKey, setSettingsDialogOpen, setRequestedPanel } = useSettingsStore();
   const viewSettings = getViewSettings(bookKey);
   const view = getView(bookKey);
@@ -72,6 +72,7 @@ export const FontLayoutPanel: React.FC<FontLayoutPanelProps> = ({
       currentViewSettings.marginLeftPx = marginPx / 2;
       currentViewSettings.marginRightPx = marginPx / 2;
 
+      setViewSettings(bookKey, { ...currentViewSettings });
       saveViewSettings(envConfig, bookKey, 'gapPercent', gapPercent, false, false);
       view?.renderer.setAttribute('margin', `${marginPx}px`);
       view?.renderer.setAttribute('gap', `${gapPercent}%`);
@@ -80,7 +81,7 @@ export const FontLayoutPanel: React.FC<FontLayoutPanelProps> = ({
         view?.renderer.setAttribute('flow', 'scrolled');
       }
     },
-    [envConfig, bookKey, view, getViewSettings],
+    [envConfig, bookKey, view, getViewSettings, setViewSettings],
   );
 
   const handleLineHeightChange = useCallback(

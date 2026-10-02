@@ -470,7 +470,8 @@ describe('TTSMiniPlayer', () => {
     expect(props.onForward).toHaveBeenCalledWith(true);
     expect(screen.queryByLabelText('Previous Paragraph')).toBeNull();
     expect(screen.queryByLabelText('Next Paragraph')).toBeNull();
-    expect(screen.queryByLabelText('Playback settings')).toBeNull();
+    fireEvent.click(screen.getByLabelText('Playback settings'));
+    expect(props.onExpand).toHaveBeenCalledOnce();
   });
 
   test('full style expands the sheet from the book info area', () => {

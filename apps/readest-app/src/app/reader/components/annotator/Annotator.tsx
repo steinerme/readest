@@ -18,6 +18,7 @@ import { useBookDataStore } from '@/store/bookDataStore';
 import { getBookProgress, useBookProgress } from '@/store/readerProgressStore';
 import { useSettingsStore } from '@/store/settingsStore';
 import { useReaderStore } from '@/store/readerStore';
+import { usePdfReflowStore } from '@/store/pdfReflowStore';
 import { useNotebookStore } from '@/store/notebookStore';
 import { useSidebarStore } from '@/store/sidebarStore';
 import { useCustomDictionaryStore } from '@/store/customDictionaryStore';
@@ -473,6 +474,9 @@ const Annotator: React.FC<{ bookKey: string; contentInsets: Insets }> = ({
         annotated?: boolean;
         isNote?: boolean;
         rect?: TextSelection['rect'];
+        reflow?: boolean;
+        originalRange?: Range;
+        quickAction?: string;
       };
       if (detail.key !== bookKey) return;
       // Every event for this book advances the epoch so a handler still
@@ -523,6 +527,8 @@ const Annotator: React.FC<{ bookKey: string; contentInsets: Insets }> = ({
             page: annotation.page ?? getBookProgress(bookKey)?.page ?? 0,
             annotated: true,
             popup: true,
+            reflow: detail.reflow,
+            originalRange: detail.originalRange,
           });
           return;
         }
@@ -535,9 +541,15 @@ const Annotator: React.FC<{ bookKey: string; contentInsets: Insets }> = ({
         range: detail.range,
         index: detail.index ?? -1,
         cfi: detail.cfi,
-        href: detail.href,
-        page: getBookProgress(bookKey)?.page ?? 0,
+        href: detail.href ?? (detail.reflow ? getBookProgress(bookKey)?.sectionHref : undefined),
+        page:
+          detail.reflow && detail.index != null
+            ? detail.index + 1
+            : (getBookProgress(bookKey)?.page ?? 0),
         popup: true,
+        reflow: detail.reflow,
+        originalRange: detail.originalRange,
+        reflowQuickAction: detail.quickAction,
       });
     };
     eventDispatcher.on('footnote-selection', onFootnoteSelection);
@@ -761,6 +773,10 @@ const Annotator: React.FC<{ bookKey: string; contentInsets: Insets }> = ({
   // capturing them at load time, because foliate also fires `load` for preloaded
   // neighbour sections, whose doc/index would be off-screen.
   const handleNativeTouch = (ev: NativeTouchEventType) => {
+    // Reflow reports host-document selections through the shared selection
+    // event. The hidden PDF's native touch bridge must not republish an empty
+    // iframe selection over it when the user lifts their finger.
+    if (usePdfReflowStore.getState().sessions[bookKey]) return;
     const contents = view?.renderer?.getContents?.() ?? [];
     const content = contents.find((c) => c.index === view?.renderer?.primaryIndex) ?? contents[0];
     const doc = content?.doc;
@@ -1183,7 +1199,39 @@ const Annotator: React.FC<{ bookKey: string; contentInsets: Insets }> = ({
       if (showDictionaryPopup || showDeepLPopup || showProofreadPopup) return;
 
       const { enableAnnotationQuickActions, annotationQuickAction } = viewSettings;
-      if (wantWordLensDict) {
+      if (selection.reflow && selection.reflowQuickAction && !selection.quickActionHandled) {
+        selection.quickActionHandled = true;
+        setSelection({ ...selection });
+        switch (selection.reflowQuickAction) {
+          case 'highlight':
+            if (selection.cfi) handleHighlight(false, 'highlight');
+            else handleShowAnnotPopup();
+            break;
+          case 'copy':
+            handleCopy(false);
+            handleDismissPopupAndSelection();
+            break;
+          case 'search':
+            handleSearch();
+            break;
+          case 'dictionary':
+            if (isSingleLookupTerm(selection.text)) handleDictionary();
+            else handleShowAnnotPopup();
+            break;
+          case 'translate':
+            handleTranslation();
+            break;
+          case 'tts':
+            if (selection.originalRange) void handleSpeakText(true);
+            else handleShowAnnotPopup();
+            break;
+          case 'share':
+            handleShare();
+            break;
+          default:
+            handleShowAnnotPopup();
+        }
+      } else if (wantWordLensDict) {
         // Route through handleDictionary so a Word Lens gloss tap honours the
         // dictionary settings (system dictionary vs the in-app popup) — same
         // as the selection-toolbar and instant-quick-action dictionary paths.
@@ -1439,7 +1487,7 @@ const Annotator: React.FC<{ bookKey: string; contentInsets: Insets }> = ({
         color,
         text: part.text,
         note: '',
-        page: progress.page,
+        page: selection.reflow ? selection.page : progress.page,
         createdAt: Date.now(),
         updatedAt: Date.now(),
       };
@@ -1716,7 +1764,7 @@ const Annotator: React.FC<{ bookKey: string; contentInsets: Insets }> = ({
     if (!selection || !selection.text) return;
     // TTS walks the main view's documents; a popup-window range can't seed it
     // (the toolbar button is disabled, this guards the keyboard shortcut).
-    if (selection.popup) return;
+    if (selection.popup && !selection.originalRange) return;
     setShowAnnotPopup(false);
     setEditingAnnotation(null);
     eventDispatcher.dispatch('tts-speak', {
@@ -1724,7 +1772,7 @@ const Annotator: React.FC<{ bookKey: string; contentInsets: Insets }> = ({
       oneTime,
       // Clone so clearing the live selection below can't disturb the range
       // TTS uses to choose where to start.
-      range: selection.range.cloneRange(),
+      range: (selection.originalRange ?? selection.range).cloneRange(),
       index: selection.index,
     });
     // The word was only selected to pick where to start reading; drop the
@@ -1799,7 +1847,7 @@ const Annotator: React.FC<{ bookKey: string; contentInsets: Insets }> = ({
         return true;
       },
       onReadAloudSelection: () => {
-        if (!selection?.text || selection.popup) return false;
+        if (!selection?.text || (selection.popup && !selection.originalRange)) return false;
         handleSpeakText(true);
         return true;
       },
@@ -2396,7 +2444,7 @@ const Annotator: React.FC<{ bookKey: string; contentInsets: Insets }> = ({
           tooltipText: _(label),
           Icon,
           onClick: () => handleSpeakText(true),
-          disabled: !!selection?.popup,
+          disabled: !!selection?.popup && !selection.originalRange,
         };
       case 'proofread':
         return {

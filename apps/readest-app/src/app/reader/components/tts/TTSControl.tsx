@@ -8,6 +8,7 @@ import { useTTSDownloads } from '@/app/reader/hooks/useTTSDownloads';
 import { Insets } from '@/types/misc';
 import { eventDispatcher } from '@/utils/event';
 import { createPortal } from 'react-dom';
+import ModalPortal from '@/components/ModalPortal';
 import { useTTSPlayerHostStore } from '@/store/ttsPlayerHostStore';
 import TTSMiniPlayer from './TTSMiniPlayer';
 import TTSPlayerSheet from './TTSPlayerSheet';
@@ -126,37 +127,39 @@ const TTSControl: React.FC<TTSControlProps> = ({ bookKey, gridInsets }) => {
         />
       )}
       {tts.ttsClientsInited && showPlayerSheet && (
-        <TTSPlayerSheet
-          bookKey={bookKey}
-          isOpen={showPlayerSheet}
-          ttsLang={tts.ttsLang}
-          isPlaying={tts.isPlaying}
-          hasTimeline={hasTimeline}
-          audioTransport={audioTransport}
-          timeoutOption={tts.timeoutOption}
-          timeoutTimestamp={tts.timeoutTimestamp}
-          chapterRemainingSec={tts.chapterRemainingSec}
-          onClose={() => setShowPlayerSheet(false)}
-          onTogglePlay={tts.handleTogglePlay}
-          onBackward={tts.handleBackward}
-          onForward={tts.handleForward}
-          onSetRate={tts.handleSetRate}
-          onGetVoices={tts.handleGetVoices}
-          onSetVoice={tts.handleSetVoice}
-          onGetVoiceId={tts.handleGetVoiceId}
-          onSelectTimeout={tts.handleSelectTimeout}
-          onSeek={tts.handleSeekTo}
-          onSeekPreview={tts.handleSeekPreview}
-          onGetPlaybackInfo={tts.handleGetPlaybackInfo}
-          supportsLyrics={tts.supportsLyrics}
-          buffering={tts.buffering}
-          onGetLyrics={tts.handleGetLyrics}
-          onGetActiveIndex={tts.handleGetLyricActiveIndex}
-          onGetLyricPage={tts.handleGetLyricPage}
-          onPlayFromLyric={tts.handlePlayFromLyric}
-          downloads={downloads}
-          activeSectionIndex={activeSectionIndex}
-        />
+        <ModalPortal showOverlay={false}>
+          <TTSPlayerSheet
+            bookKey={bookKey}
+            isOpen={showPlayerSheet}
+            ttsLang={tts.ttsLang}
+            isPlaying={tts.isPlaying}
+            hasTimeline={hasTimeline}
+            audioTransport={audioTransport}
+            timeoutOption={tts.timeoutOption}
+            timeoutTimestamp={tts.timeoutTimestamp}
+            chapterRemainingSec={tts.chapterRemainingSec}
+            onClose={() => setShowPlayerSheet(false)}
+            onTogglePlay={tts.handleTogglePlay}
+            onBackward={tts.handleBackward}
+            onForward={tts.handleForward}
+            onSetRate={tts.handleSetRate}
+            onGetVoices={tts.handleGetVoices}
+            onSetVoice={tts.handleSetVoice}
+            onGetVoiceId={tts.handleGetVoiceId}
+            onSelectTimeout={tts.handleSelectTimeout}
+            onSeek={tts.handleSeekTo}
+            onSeekPreview={tts.handleSeekPreview}
+            onGetPlaybackInfo={tts.handleGetPlaybackInfo}
+            supportsLyrics={tts.supportsLyrics}
+            buffering={tts.buffering}
+            onGetLyrics={tts.handleGetLyrics}
+            onGetActiveIndex={tts.handleGetLyricActiveIndex}
+            onGetLyricPage={tts.handleGetLyricPage}
+            onPlayFromLyric={tts.handlePlayFromLyric}
+            downloads={downloads}
+            activeSectionIndex={activeSectionIndex}
+          />
+        </ModalPortal>
       )}
     </>
   );

@@ -4,6 +4,7 @@ import { RiBookmarkLine, RiBookmarkFill } from 'react-icons/ri';
 import { useSettingsStore } from '@/store/settingsStore';
 import { useBookDataStore } from '@/store/bookDataStore';
 import { useReaderStore } from '@/store/readerStore';
+import { usePdfReflowStore } from '@/store/pdfReflowStore';
 import { useTranslation } from '@/hooks/useTranslation';
 import { useEnv } from '@/context/EnvContext';
 import { BookNote } from '@/types/book';
@@ -23,7 +24,8 @@ const BookmarkToggler: React.FC<BookmarkTogglerProps> = ({ bookKey }) => {
   const { envConfig } = useEnv();
   const { settings } = useSettingsStore();
   const { getConfig, saveConfig, getBookData, updateBooknotes } = useBookDataStore();
-  const { getProgress, getViewState, setBookmarkRibbonVisibility } = useReaderStore();
+  const { getProgress, getView, getViewState, setBookmarkRibbonVisibility } = useReaderStore();
+  const reflow = usePdfReflowStore((state) => state.sessions[bookKey]);
   const [isBookmarked, setIsBookmarked] = useState(false);
   const config = getConfig(bookKey);
   const progress = getProgress(bookKey);
@@ -36,9 +38,15 @@ const BookmarkToggler: React.FC<BookmarkTogglerProps> = ({ bookKey }) => {
     if (!bookData || !config || !progress) return;
 
     const { booknotes: bookmarks = [] } = config;
-    const { location: cfi, range } = progress;
+    const activeReflow = usePdfReflowStore.getState().sessions[bookKey];
+    const cfi = activeReflow ? getView(bookKey)?.getCFI(activeReflow.page) : progress.location;
+    const range = activeReflow ? undefined : progress.range;
     if (!cfi) return;
-    const isBookmarked = getViewState(bookKey)?.ribbonVisible;
+    const isBookmarked = activeReflow
+      ? bookmarks.some(
+          (item) => item.type === 'bookmark' && !item.deletedAt && isCfiInLocation(item.cfi, cfi),
+        )
+      : getViewState(bookKey)?.ribbonVisible;
     if (!isBookmarked) {
       setIsBookmarked(true);
       const text = range?.startContainer.textContent?.slice(0, 128) || '';
@@ -47,9 +55,11 @@ const BookmarkToggler: React.FC<BookmarkTogglerProps> = ({ bookKey }) => {
         id: uniqueId(),
         type: 'bookmark',
         cfi,
-        text: truncatedText ? truncatedText : `${getCurrentPage(bookData.book!, progress)}`,
+        text: truncatedText
+          ? truncatedText
+          : `${activeReflow ? activeReflow.page + 1 : getCurrentPage(bookData.book!, progress)}`,
         note: '',
-        page: progress.page,
+        page: activeReflow ? activeReflow.page + 1 : progress.page,
         createdAt: Date.now(),
         updatedAt: Date.now(),
       };
@@ -97,7 +107,7 @@ const BookmarkToggler: React.FC<BookmarkTogglerProps> = ({ bookKey }) => {
 
   useEffect(() => {
     const { booknotes = [] } = config || {};
-    const { location: cfi } = progress || {};
+    const cfi = reflow ? getView(bookKey)?.getCFI(reflow.page) : progress?.location;
     if (!cfi) return;
 
     const locationBookmarked = booknotes
@@ -106,7 +116,7 @@ const BookmarkToggler: React.FC<BookmarkTogglerProps> = ({ bookKey }) => {
     setIsBookmarked(locationBookmarked);
     setBookmarkRibbonVisibility(bookKey, locationBookmarked);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [config, progress]);
+  }, [config, progress, reflow?.page]);
 
   return (
     <Button

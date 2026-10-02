@@ -48,6 +48,7 @@ interface ViewMenuProps {
   setIsDropdownOpen?: (open: boolean) => void;
   onShowMetaHashDialog?: () => void;
   onOpenPdfReflow?: () => void;
+  pdfReflowActive?: boolean;
 }
 
 const ViewMenu: React.FC<ViewMenuProps> = ({
@@ -55,6 +56,7 @@ const ViewMenu: React.FC<ViewMenuProps> = ({
   setIsDropdownOpen,
   onShowMetaHashDialog,
   onOpenPdfReflow,
+  pdfReflowActive = false,
 }) => {
   const _ = useTranslation();
   const router = useRouter();
@@ -593,7 +595,7 @@ const ViewMenu: React.FC<ViewMenuProps> = ({
       />
       {bookData.book?.format === 'PDF' && onOpenPdfReflow && (
         <MenuItem
-          label={_('PDF Text Reflow')}
+          label={_(pdfReflowActive ? 'Switch to PDF' : 'Switch to Reflow')}
           onClick={() => {
             setIsDropdownOpen?.(false);
             onOpenPdfReflow();
