@@ -124,7 +124,8 @@ const SettingsDialog: React.FC<{ bookKey: string }> = ({ bookKey }) => {
       tab: 'AI',
       icon: PiRobot,
       label: _('AI Assistant'),
-      disabled: process.env.NODE_ENV === 'production',
+      // Preview ships reading AI in release APKs as well as development.
+      // Keep configuration discoverable even while AI itself is disabled.
     },
     {
       tab: 'TTS',

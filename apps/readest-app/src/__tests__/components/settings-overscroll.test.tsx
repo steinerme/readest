@@ -49,7 +49,9 @@ vi.mock('@/components/settings/ThemePanel', () => ({ default: () => null }));
 vi.mock('@/components/settings/ControlPanel', () => ({ default: () => null }));
 vi.mock('@/components/settings/TTSPanel', () => ({ default: () => null }));
 vi.mock('@/components/settings/LangPanel', () => ({ default: () => null }));
-vi.mock('@/components/settings/AIPanel', () => ({ default: () => null }));
+vi.mock('@/components/settings/AIPanel', () => ({
+  default: () => <div data-testid='ai-settings-panel'>AI settings</div>,
+}));
 vi.mock('@/components/settings/IntegrationsPanel', () => ({ default: () => null }));
 vi.mock('@/components/settings/MiscPanel', () => ({ default: () => null }));
 
@@ -210,5 +212,31 @@ describe('Settings tab scrolling', () => {
     viewport.scrollTop = 300;
     fireEvent.click(screen.getByTitle('Font'));
     expect(viewport.scrollTop).toBe(0);
+  });
+});
+
+describe('Release AI settings entry', () => {
+  it('shows and opens AI Assistant from ordinary settings in production', () => {
+    vi.stubEnv('NODE_ENV', 'production');
+    try {
+      render(<SettingsDialog bookKey='' />);
+      const tab = screen.getByTitle('AI Assistant');
+      expect(tab).toBeTruthy();
+      fireEvent.click(tab);
+      expect(screen.getByTestId('ai-settings-panel')).toBeTruthy();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+  it('restores the AI tab when ordinary settings reopen in production', () => {
+    vi.stubEnv('NODE_ENV', 'production');
+    try {
+      localStorage.setItem('lastConfigPanel', 'AI');
+      render(<SettingsDialog bookKey='' />);
+      expect(screen.getByTitle('AI Assistant')).toBeTruthy();
+      expect(screen.getByTestId('ai-settings-panel')).toBeTruthy();
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 });
