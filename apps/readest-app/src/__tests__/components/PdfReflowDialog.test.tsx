@@ -7,6 +7,7 @@ import { useTTSPlayerHostStore } from '@/store/ttsPlayerHostStore';
 
 const mocks = vi.hoisted(() => ({
   pages: [] as Array<{ getReflowText?: () => Promise<unknown> }>,
+  suppressMenu: vi.fn(async () => {}),
   index: 0,
   goTo: vi.fn(),
   hovered: '',
@@ -15,7 +16,8 @@ const mocks = vi.hoisted(() => ({
   originalDoc: null as Document | null,
   notes: [] as import('@/types/book').BookNote[],
 }));
-vi.mock('@/context/EnvContext', () => ({ useEnv: () => ({ appService: { isMobile: true } }) }));
+vi.mock('@/context/EnvContext', () => ({ useEnv: () => ({ appService: { isMobile: true, isAndroidApp: true } }) }));
+vi.mock('@/utils/bridge', () => ({ setSelectionSuppressed: mocks.suppressMenu }));
 vi.mock('@/store/themeStore', () => ({
   useThemeStore: () => ({
     safeAreaInsets: { top: 24, bottom: 16 },
@@ -108,6 +110,9 @@ describe('PDF reflow as the original reader content mode', () => {
     mocks.originalDoc = rangeFor('第一页正文。').startContainer.ownerDocument;
     render(<PdfReflowDialog bookKey='pdf-1' onClose={vi.fn()} />);
     const p = await screen.findByText('第一页正文。');
+    fireEvent.pointerDown(p);
+    expect(mocks.suppressMenu).toHaveBeenLastCalledWith({ target: 'menu', suppressed: true });
+    fireEvent.pointerUp(p);
     const range = document.createRange();
     range.selectNodeContents(p);
     window.getSelection()!.removeAllRanges();

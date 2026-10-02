@@ -9,6 +9,7 @@ import { getHighlightColorHex } from '../utils/annotatorUtil';
 import { useSettingsStore } from '@/store/settingsStore';
 import { useEnv } from '@/context/EnvContext';
 import { usePdfReflowTTS } from '../hooks/usePdfReflowTTS';
+import { useReflowSelectionMenu } from '../hooks/useReflowSelectionMenu';
 import { useBookDataStore } from '@/store/bookDataStore';
 import { useReaderStore } from '@/store/readerStore';
 import { useTranslation } from '@/hooks/useTranslation';
@@ -83,6 +84,7 @@ const PdfReflowDialog = ({ bookKey, initialPage, onClose, onGoToLibrary }: Props
   const [error, setError] = useState(false);
 
   const scrollRef = useRef<HTMLElement>(null);
+  useReflowSelectionMenu(scrollRef, !!appService?.isAndroidApp);
   const citationRef = useRef<{ cfi: string; page: number; range?: Range } | null>(null);
   const resultPageRef = useRef(-1);
   const [citationEpoch, setCitationEpoch] = useState(0);
