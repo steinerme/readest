@@ -409,7 +409,10 @@ const PdfReflowDialog = ({ bookKey, initialPage, onClose, onGoToLibrary }: Props
           }
         }}
         onPointerCancel={() => {
-          pointer.current = null;
+          if (pointer.current) {
+            pointer.current.down = false;
+            pointer.current.moved = true;
+          }
         }}
         onWheel={tts.suspendFollowing}
         onKeyDown={(e) => {
@@ -431,6 +434,20 @@ const PdfReflowDialog = ({ bookKey, initialPage, onClose, onGoToLibrary }: Props
             return;
           if (window.getSelection()?.toString()) return;
           if (p && (p.moved || Date.now() - p.time > 450)) return;
+          // Use the visible article's bounds, not the window: shared panels,
+          // split views and landscape can change the reader's position/width.
+          const { left, width } = e.currentTarget.getBoundingClientRect();
+          const x = e.clientX - left;
+          if (width > 0 && x >= 0 && x <= width) {
+            if (x < width / 3) {
+              if (!busy && page > 0) goPage(page - 1);
+              return;
+            }
+            if (x > (width * 2) / 3) {
+              if (!busy && page < count - 1) goPage(page + 1);
+              return;
+            }
+          }
           setHoveredBookKey(hoveredBookKey === bookKey ? '' : bookKey);
         }}
         className='pdf-reflow-page'

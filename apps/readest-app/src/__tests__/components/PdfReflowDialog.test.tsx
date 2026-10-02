@@ -173,6 +173,107 @@ describe('PDF reflow as the original reader content mode', () => {
     fireEvent.click(text);
     expect(mocks.setHovered).not.toHaveBeenCalled();
   });
+  const tapArticle = (article: HTMLElement, x: number) => {
+    vi.spyOn(article, 'getBoundingClientRect').mockReturnValue({
+      left: 100,
+      width: 600,
+      right: 700,
+      top: 0,
+      bottom: 800,
+      height: 800,
+      x: 100,
+      y: 0,
+      toJSON: () => ({}),
+    });
+    fireEvent.click(article, { clientX: x, clientY: 200 });
+  };
+  it('right and left thirds turn physical pages through the shared service without toggling chrome', async () => {
+    const r = render(<PdfReflowDialog bookKey='pdf-1' onClose={vi.fn()} />);
+    await screen.findByText('第一页正文。');
+    const article = r.container.querySelector('article')!;
+    tapArticle(article, 650);
+    await screen.findByText('第二页正文。');
+    expect(mocks.goTo).toHaveBeenCalledWith(1);
+    expect(article.scrollTop).toBe(0);
+    expect(usePdfReflowStore.getState().sessions['pdf-1']?.page).toBe(1);
+    tapArticle(article, 150);
+    await screen.findByText('第一页正文。');
+    expect(mocks.goTo).toHaveBeenLastCalledWith(0);
+    expect(mocks.setHovered).not.toHaveBeenCalled();
+  });
+  it('middle third opens and closes the same shared chrome', async () => {
+    mocks.hovered = 'pdf-1';
+    const r = render(<PdfReflowDialog bookKey='pdf-1' onClose={vi.fn()} />);
+    await screen.findByText('第一页正文。');
+    tapArticle(r.container.querySelector('article')!, 400);
+    expect(mocks.setHovered).toHaveBeenCalledWith('');
+    expect(mocks.goTo).not.toHaveBeenCalled();
+  });
+  it('does not wrap at the first or last physical page or reveal chrome at boundaries', async () => {
+    const r = render(<PdfReflowDialog bookKey='pdf-1' onClose={vi.fn()} />);
+    await screen.findByText('第一页正文。');
+    const article = r.container.querySelector('article')!;
+    tapArticle(article, 150);
+    expect(mocks.goTo).not.toHaveBeenCalled();
+    tapArticle(article, 650);
+    await screen.findByText('第二页正文。');
+    mocks.goTo.mockClear();
+    tapArticle(article, 650);
+    expect(mocks.goTo).not.toHaveBeenCalled();
+    expect(mocks.setHovered).not.toHaveBeenCalled();
+  });
+  it('ignores side taps while text is still loading', () => {
+    mocks.pages[0] = { getReflowText: () => new Promise(() => {}) };
+    const r = render(<PdfReflowDialog bookKey='pdf-1' onClose={vi.fn()} />);
+    tapArticle(r.container.querySelector('article')!, 650);
+    expect(mocks.goTo).not.toHaveBeenCalled();
+    expect(mocks.setHovered).not.toHaveBeenCalled();
+  });
+  it('never side-turns after scrolling, pointer cancellation, long press or selected text', async () => {
+    const r = render(<PdfReflowDialog bookKey='pdf-1' onClose={vi.fn()} />);
+    const text = await screen.findByText('第一页正文。');
+    const article = r.container.querySelector('article')!;
+    fireEvent.pointerDown(article);
+    fireEvent.scroll(article);
+    fireEvent.pointerUp(article);
+    tapArticle(article, 650);
+    fireEvent.pointerDown(article);
+    fireEvent.pointerCancel(article);
+    tapArticle(article, 650);
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1000);
+    fireEvent.pointerDown(article);
+    now.mockReturnValue(1500);
+    fireEvent.pointerUp(article);
+    tapArticle(article, 650);
+    now.mockRestore();
+    const range = document.createRange();
+    range.selectNodeContents(text);
+    window.getSelection()!.addRange(range);
+    tapArticle(article, 650);
+    window.getSelection()!.removeAllRanges();
+    expect(mocks.goTo).not.toHaveBeenCalled();
+    expect(mocks.setHovered).not.toHaveBeenCalled();
+  });
+  it('side taps detach visual speech following but do not stop the shared playback', async () => {
+    const stopped = vi.fn();
+    eventDispatcher.on('tts-stop', stopped);
+    try {
+      const r = render(<PdfReflowDialog bookKey='pdf-1' onClose={vi.fn()} />);
+      await screen.findByText('第一页正文。');
+      await act(async () => {
+        await eventDispatcher.dispatch('tts-playback-state', {
+          bookKey: 'pdf-1',
+          state: 'playing',
+        });
+      });
+      tapArticle(r.container.querySelector('article')!, 650);
+      await screen.findByText('第二页正文。');
+      expect(screen.getByText('Back to Read Aloud')).toBeTruthy();
+      expect(stopped).not.toHaveBeenCalled();
+    } finally {
+      eventDispatcher.off('tts-stop', stopped);
+    }
+  });
   it('reads the exact same font/line-spacing settings updated by the original panels', async () => {
     const r = render(<PdfReflowDialog bookKey='pdf-1' onClose={vi.fn()} />);
     await screen.findByText('第一页正文。');
