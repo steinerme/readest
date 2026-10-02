@@ -29,6 +29,7 @@ import { useCountdownLabel } from './useCountdownLabel';
 import { formatRate } from './SpeedRuler';
 import BufferingRing from './BufferingRing';
 import { getTTSMiniPlayerBottomOffset } from '../../utils/ttsMiniPlayerPosition';
+import { eventDispatcher } from '@/utils/event';
 
 // Playback-settings glyph: a hex nut whose top-right edge is left open so
 // the current speed sits in the gap (podcast-player convention). The number
@@ -238,6 +239,18 @@ const TTSMiniPlayer = ({
       onTouchStart={() => !appService?.isMobile && setHoveredBookKey('')}
     >
       <div className='not-eink:bg-base-300 eink-bordered relative overflow-hidden rounded-2xl shadow-lg'>
+        <div className='flex items-center justify-end border-b border-base-content/10 px-2 py-1'>
+          <button
+            type='button'
+            className='btn btn-ghost btn-sm h-9 min-h-9'
+            aria-label='AI 听书助手'
+            onClick={() =>
+              void eventDispatcher.dispatch('reading-ai-open', { bookKey, mode: 'listening' })
+            }
+          >
+            AI · 刚才那段
+          </button>
+        </div>
         {hasTimeline && (
           // E-ink has no legible grey tints: delineate the track with a crisp
           // 1px hairline, drop the buffer fill, and paint progress solid.

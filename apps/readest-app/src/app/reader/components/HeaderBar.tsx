@@ -38,6 +38,7 @@ import { createPortal } from 'react-dom';
 import { usePdfReflowStore } from '@/store/pdfReflowStore';
 import '@/styles/reader-polish.css';
 import { getPdfRendererPage } from '@/utils/pdfRendererPage';
+import { eventDispatcher } from '@/utils/event';
 
 interface HeaderBarProps {
   bookKey: string;
@@ -313,6 +314,16 @@ const HeaderBar: React.FC<HeaderBarProps> = ({
                 {_(isPdfReflowOpen ? 'Switch to PDF' : 'Switch to Reflow')}
               </button>
             )}
+            <button
+              type='button'
+              className='btn btn-ghost h-11 min-h-11 shrink-0 px-2 text-sm'
+              aria-label='问这本书'
+              onClick={() =>
+                void eventDispatcher.dispatch('reading-ai-open', { bookKey, mode: 'book' })
+              }
+            >
+              问 AI
+            </button>
             <BookmarkToggler bookKey={bookKey} />
             <TranslationToggler bookKey={bookKey} />
           </div>

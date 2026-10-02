@@ -53,6 +53,7 @@ import AudiobookPairingDialog from './audiobook/AudiobookPairingDialog';
 import HardcoverLinkDialog from './hardcover/HardcoverLinkDialog';
 import ModalPortal from '@/components/ModalPortal';
 import NotebookTransitionAlert from './notebook/NotebookTransitionAlert';
+import ReadingAssistantHost from './ai/ReadingAssistantHost';
 
 /**
  * How long the close path waits for the Notion flush before giving up on it.
@@ -420,6 +421,7 @@ const ReaderContent: React.FC<{ ids?: string; settings: SystemSettings }> = ({ i
         />
       )}
       <Notebook />
+      <ReadingAssistantHost bookKeys={bookKeys} />
       <LocalSendManager />
       {showDetailsBook && (
         <BookDetailModal

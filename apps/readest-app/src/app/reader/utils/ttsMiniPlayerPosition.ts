@@ -1,9 +1,9 @@
 import type { ViewSettings } from '@/types/book';
 import { footerInfoVisible } from './footerBand';
 
-// Card height of the TTS mini player (h-14). See getTTSMiniPlayerClearance for
-// when the reader text reserves a band of this height.
-export const TTS_MINI_PLAYER_HEIGHT = 56;
+// 56px transport + 45px AI action row (36px button, 8px padding, 1px border).
+// Reflow measures its dock naturally; the original minimal card reserves this.
+export const TTS_MINI_PLAYER_HEIGHT = 101;
 
 // 64px mobile nav bar / 52px desktop footer bar, plus an 8px gap.
 const ABOVE_MOBILE_BAR = 72;

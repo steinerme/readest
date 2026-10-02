@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { RiDeleteBinLine } from 'react-icons/ri';
+import { RiDeleteBinLine, RiSparklingLine } from 'react-icons/ri';
 
 import * as CFI from 'foliate-js/epubcfi.js';
 import { useEnv } from '@/context/EnvContext';
@@ -2463,6 +2463,23 @@ const Annotator: React.FC<{ bookKey: string; contentInsets: Insets }> = ({
   const toolButtons = toolbarToolTypes
     .map(buildToolButton)
     .filter((button): button is NonNullable<typeof button> => button !== null);
+  if (selection?.text) {
+    toolButtons.unshift({
+      tooltipText: 'AI 解释',
+      Icon: RiSparklingLine,
+      onClick: () => {
+        let cfi = selection.cfi;
+        try {
+          cfi ||= selection.popup ? undefined : view?.getCFI(selection.index, selection.range);
+        } catch {
+          /* Text can be explained without inventing an anchor. */
+        }
+        const seed = { text: selection.text, cfi: cfi ?? undefined, sectionIndex: selection.index };
+        handleDismissPopupAndSelection();
+        void eventDispatcher.dispatch('reading-ai-open', { bookKey, mode: 'selection', seed });
+      },
+    });
+  }
 
   // The lookup popups never deselect (handleDictionary / handleTranslation /
   // handleProofread only flip popup flags), so a genuine selection is still

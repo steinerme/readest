@@ -128,16 +128,22 @@ const AIPanel: React.FC = () => {
     settingsRef.current = settings;
   }, [settings]);
 
+  const settingsSaveQueue = useRef<Promise<void>>(Promise.resolve());
   const saveAiSetting = useCallback(
     async (key: keyof AISettings, value: AISettings[keyof AISettings]) => {
-      const currentSettings = settingsRef.current;
+      const currentSettings = useSettingsStore.getState().settings;
       if (!currentSettings) return;
       const currentAiSettings: AISettings = currentSettings.aiSettings ?? DEFAULT_AI_SETTINGS;
       const newAiSettings: AISettings = { ...currentAiSettings, [key]: value };
       const newSettings = { ...currentSettings, aiSettings: newAiSettings };
 
+      settingsRef.current = newSettings;
       setSettings(newSettings);
-      await saveSettings(envConfig, newSettings);
+      const write = settingsSaveQueue.current
+        .catch(() => {})
+        .then(() => saveSettings(envConfig, newSettings));
+      settingsSaveQueue.current = write;
+      await write;
     },
     [envConfig, setSettings, saveSettings],
   );
@@ -184,9 +190,8 @@ const AIPanel: React.FC = () => {
       // `name || id` so OpenRouter's friendly labels still show up.
       models.sort((a, b) => a.id.localeCompare(b.id));
       setOpenrouterModels(models);
-      if (models.length > 0 && !models.some((m) => m.id === openrouterModel)) {
-        setOpenrouterModel(models[0]!.id);
-      }
+      // Keep the manually entered model. Some compatible endpoints have an
+      // incomplete /models listing and must not silently replace that choice.
     } catch (e) {
       setOpenrouterModels([]);
       setOpenrouterModelsError((e as Error).message || _('Failed to fetch models'));
@@ -196,12 +201,12 @@ const AIPanel: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enabled, openrouterUrl, openrouterKey, openrouterModel]);
 
+  // Fetch models only on an explicit refresh: typing a key or URL must not
+  // emit one authentication request per keystroke.
   useEffect(() => {
-    if (provider === 'openrouter' && enabled && openrouterKey && openrouterUrl) {
-      fetchOpenrouterModelList();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [provider, enabled, openrouterKey, openrouterUrl]);
+    setOpenrouterModels([]);
+    setOpenrouterModelsError('');
+  }, [provider, openrouterKey, openrouterUrl]);
 
   useEffect(() => {
     isMounted.current = true;
@@ -405,6 +410,18 @@ const AIPanel: React.FC = () => {
 
   return (
     <div className='my-4 w-full space-y-6'>
+      <div className='rounded-xl bg-base-200 p-3 text-sm space-y-2'>
+        <p className='font-semibold'>阅读 AI：选中解释 · 问这本书 · 听书助手</p>
+        <p>选中文字 → AI 解释；阅读顶栏 → 问 AI；听书卡片 → AI · 刚才那段。</p>
+        <p>
+          先本地检索，再预览原文并确认发送。不会自动上传整本书；不需要 embedding 模型。建议使用
+          OpenAI Compatible 自填 API 地址、密钥和模型。
+        </p>
+        <p>
+          API 密钥按现有设置保存在本机，不写入书籍笔记。AI 解读保存时会明确标注；语音解释使用独立
+          Edge 语音服务，需另外勾选同意。
+        </p>
+      </div>
       <BoxedList title={_('AI Assistant')}>
         <SettingsSwitchRow
           label={_('Enable AI Assistant')}
@@ -700,6 +717,22 @@ const AIPanel: React.FC = () => {
                 {_('Enter an API key, then refresh to load available models.')}
               </span>
             )}
+          </div>
+
+          <div className='flex flex-col gap-2 pe-4 py-3'>
+            <SettingLabel>自定义模型 ID（可直接填写，不必获取模型列表）</SettingLabel>
+            <input
+              type='text'
+              className='input input-sm w-full'
+              value={openrouterModel}
+              onChange={(e) => setOpenrouterModel(e.target.value)}
+              disabled={!enabled}
+              placeholder='例如 deepseek-chat 或你的服务商模型 ID'
+            />
+            <span className='text-base-content/60 text-xs'>
+              API 地址填写版本根路径，如 https://api.example.com/v1，不要填写
+              /chat/completions。选区解释、书内问答和听书助手不需要 embedding 模型。
+            </span>
           </div>
 
           {/* Embedding model — same /models listing as the LLM picker.

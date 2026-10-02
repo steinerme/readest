@@ -83,6 +83,9 @@ const PdfReflowDialog = ({ bookKey, initialPage, onClose, onGoToLibrary }: Props
   const [error, setError] = useState(false);
 
   const scrollRef = useRef<HTMLElement>(null);
+  const citationRef = useRef<{ cfi: string; page: number; range?: Range } | null>(null);
+  const resultPageRef = useRef(-1);
+  const [citationEpoch, setCitationEpoch] = useState(0);
   const cacheRef = useRef(new Map<number, ReflowPage>());
   const tts = usePdfReflowTTS({ bookKey, page, count, result, setPage, scrollRef });
 
@@ -115,7 +118,10 @@ const PdfReflowDialog = ({ bookKey, initialPage, onClose, onGoToLibrary }: Props
             if (oldest !== undefined) cacheRef.current.delete(oldest);
           }
         }
-        if (current) setResult(parsed);
+        if (current) {
+          resultPageRef.current = page;
+          setResult(parsed);
+        }
       } catch {
         if (current) setError(true);
       } finally {
@@ -180,17 +186,78 @@ const PdfReflowDialog = ({ bookKey, initialPage, onClose, onGoToLibrary }: Props
     [count, view],
   );
 
+  const revealCitation = useCallback(
+    async (cfi: string) => {
+      if (!view || !bookDoc) throw new Error('PDF unavailable');
+      const resolved = view.resolveCFI(cfi);
+      if (!resolved || resolved.index < 0 || resolved.index >= count)
+        throw new Error('Invalid citation');
+      const doc = await bookDoc.sections[resolved.index]?.createDocument();
+      const range = doc && resolved.anchor?.(doc);
+      if (!range || typeof range.cloneRange !== 'function')
+        throw new Error('Citation anchor unavailable');
+      citationRef.current = { cfi, page: resolved.index, range: range.cloneRange() };
+      await navigate(cfi);
+      if (!isPdfPageVisible(view.renderer, resolved.index)) {
+        citationRef.current = null;
+        throw new Error('Citation navigation failed');
+      }
+      setCitationEpoch((value) => value + 1);
+    },
+    [view, bookDoc, count, navigate],
+  );
+
+  useEffect(() => {
+    const pending = citationRef.current;
+    if (
+      !pending ||
+      pending.page !== page ||
+      resultPageRef.current !== page ||
+      busy ||
+      !result ||
+      !scrollRef.current
+    )
+      return;
+    citationRef.current = null;
+    const mapped = pending.range ? mapPdfSpeechRange(result, pending.range) : [];
+    const block = mapped[0]?.block;
+    const target =
+      block !== undefined
+        ? scrollRef.current.querySelector<HTMLElement>(`[data-reflow-block="${block}"]`)
+        : null;
+    if (target) {
+      const article = scrollRef.current;
+      article.scrollTop = Math.max(
+        0,
+        article.scrollTop +
+          target.getBoundingClientRect().top -
+          article.getBoundingClientRect().top -
+          20,
+      );
+      target.animate?.(
+        [{ backgroundColor: 'rgba(124,92,255,0.25)' }, { backgroundColor: 'transparent' }],
+        { duration: 1800 },
+      );
+    } else {
+      void eventDispatcher.dispatch('toast', {
+        type: 'info',
+        message: '已定位原 PDF 页；此页重排文字无法可靠映射引用段落。',
+      });
+    }
+  }, [page, busy, result, citationEpoch]);
+
   useLayoutEffect(() => {
     const store = usePdfReflowStore.getState();
     store.setSession(bookKey, {
       page,
       count,
       navigate,
+      revealCitation,
       close: () => currentRef.current.returnToOriginal(),
       speak: () => currentRef.current.tts.toggle(),
       returnToSpeech: () => currentRef.current.tts.returnToSpeech(),
     });
-  }, [bookKey, page, count, navigate]);
+  }, [bookKey, page, count, navigate, revealCitation]);
   useLayoutEffect(
     () => () => usePdfReflowStore.getState().clearSession(bookKey, navigate),
     [bookKey, navigate],

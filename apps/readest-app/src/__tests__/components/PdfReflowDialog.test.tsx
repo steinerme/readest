@@ -46,7 +46,7 @@ const view = Object.assign(new EventTarget(), {
     getContents: () => [{ index: mocks.index, doc: mocks.originalDoc }],
   },
   goTo: (page: number) => mocks.goTo(page),
-  resolveNavigation: (target: string) => ({ index: Number(target) }),
+  resolveNavigation: (target: string) => ({ index: target === 'real-cfi' ? 0 : Number(target) }),
   getCFI: (index: number, range: Range) => `original-${index}-${range.startOffset}`,
   resolveCFI: () => ({
     index: 0,
@@ -460,5 +460,47 @@ describe('PDF reflow as the original reader content mode', () => {
     } finally {
       eventDispatcher.off('tts-stop', stopped);
     }
+  });
+});
+
+it('reveals an AI citation using its original text-layer Range, not a text search', async () => {
+  const original = rangeFor('第一页正文。').startContainer.ownerDocument!;
+  mocks.pages[0] = {
+    getReflowText: () => textPage('第一页正文。'),
+    createDocument: async () => original,
+  } as (typeof mocks.pages)[number];
+  mocks.goTo.mockImplementation(async () => {
+    mocks.index = 0;
+    view.dispatchEvent(new CustomEvent('relocate'));
+  });
+  const r = render(<PdfReflowDialog bookKey='pdf-1' onClose={vi.fn()} />);
+  const paragraph = await screen.findByText('第一页正文。');
+  const animate = vi.fn();
+  paragraph.animate = animate;
+  const article = r.container.querySelector('article')!;
+  article.getBoundingClientRect = () => ({ top: 0 }) as DOMRect;
+  paragraph.getBoundingClientRect = () => ({ top: 500 }) as DOMRect;
+  await act(async () => {
+    await usePdfReflowStore.getState().sessions['pdf-1']!.revealCitation!('real-cfi');
+  });
+  expect(mocks.goTo).toHaveBeenCalledWith('real-cfi');
+  expect(article.scrollTop).toBe(480);
+  expect(animate).toHaveBeenCalledOnce();
+});
+
+it('rejects an AI citation whose original PDF page cannot be reached', async () => {
+  const original = rangeFor('第一页正文。').startContainer.ownerDocument!;
+  mocks.pages[0] = {
+    getReflowText: () => textPage('第一页正文。'),
+    createDocument: async () => original,
+  } as (typeof mocks.pages)[number];
+  render(<PdfReflowDialog bookKey='pdf-1' onClose={vi.fn()} />);
+  await screen.findByText('第一页正文。');
+  mocks.index = 1;
+  mocks.goTo.mockResolvedValue(undefined);
+  await act(async () => {
+    await expect(
+      usePdfReflowStore.getState().sessions['pdf-1']!.revealCitation!('real-cfi'),
+    ).rejects.toThrow('Citation navigation failed');
   });
 });

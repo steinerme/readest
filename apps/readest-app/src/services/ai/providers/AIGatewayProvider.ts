@@ -5,6 +5,7 @@ import { aiLogger } from '../logger';
 import { GATEWAY_MODELS } from '../constants';
 import { AI_TIMEOUTS } from '../utils/retry';
 import { createProxiedEmbeddingModel } from './ProxiedGatewayEmbedding';
+import { getAIFetch } from '../utils/httpFetch';
 
 export class AIGatewayProvider implements AIProvider {
   id: AIProviderName = 'ai-gateway';
@@ -19,7 +20,7 @@ export class AIGatewayProvider implements AIProvider {
     if (!settings.aiGatewayApiKey) {
       throw new Error('AI Gateway API key required');
     }
-    this.gateway = createGateway({ apiKey: settings.aiGatewayApiKey });
+    this.gateway = createGateway({ apiKey: settings.aiGatewayApiKey, fetch: getAIFetch() });
     aiLogger.provider.init(
       'ai-gateway',
       settings.aiGatewayModel || GATEWAY_MODELS.GEMINI_FLASH_LITE,

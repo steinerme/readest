@@ -5,6 +5,7 @@ export interface PdfReflowSession {
   page: number;
   count: number;
   navigate: (target: number | string) => Promise<void>;
+  revealCitation?: (cfi: string) => Promise<void>;
   close: () => void;
   speak: () => Promise<void>;
   returnToSpeech: () => void;

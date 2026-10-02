@@ -44,6 +44,7 @@ import SpeedRuler, { formatRate } from './SpeedRuler';
 import TTSChaptersView from './TTSChaptersView';
 import { TTS_STOP_AT_CHAPTER_END } from '@/services/tts/TTSSessionManager';
 import type { UseTTSDownloadsResult } from '@/app/reader/hooks/useTTSDownloads';
+import { eventDispatcher } from '@/utils/event';
 
 type SheetView = 'main' | 'speed' | 'voice' | 'timer' | 'chapters';
 
@@ -551,6 +552,17 @@ const TTSPlayerSheet = ({
               </span>
             </button>
           </div>
+          <button
+            type='button'
+            className='btn btn-outline w-full min-h-11'
+            aria-label='AI 听书助手'
+            onClick={() => {
+              onClose();
+              void eventDispatcher.dispatch('reading-ai-open', { bookKey, mode: 'listening' });
+            }}
+          >
+            AI · 解释、概括或记录刚才内容
+          </button>
           {!isNarrating && downloads.supported && downloads.chapters.length > 0 && (
             <button
               type='button'
