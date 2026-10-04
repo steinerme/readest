@@ -330,6 +330,8 @@ function segmentLine(line: Line, gap: number): Segment[] {
   let current: Segment | undefined;
   let end = -Infinity;
   for (const run of line.runs) {
+    // Blank runs are padding: they neither start a segment nor extend one.
+    if (!run.text.trim()) continue;
     if (!current || run.x - end > gap) {
       current = { x0: run.x, x1: run.x + run.width, runs: [], text: '' };
       segments.push(current);
@@ -361,6 +363,10 @@ function inferColumns(rows: Segment[][], minShare: number): ColumnFit | null {
       best = times;
     }
   if (modal < 2 || best < Math.max(2, Math.ceil(rows.length * minShare))) return null;
+  // Wrapped continuation rows carry fewer segments than full rows and can
+  // outnumber them; prefer the widest layout that still repeats.
+  for (const [count, times] of counts)
+    if (count > modal && times >= 2 && times >= best * 0.5) modal = count;
   const body = rows.filter((row) => row.length === modal);
   const bands: Array<[number, number]> = [];
   for (let j = 0; j < modal; j++)
@@ -509,7 +515,7 @@ function detectRuleTables(
     const { lines } = buildLines(inside, pageWidth);
     if (lines.length < 2) continue;
     const size = median(lines.map((l) => l.size)) || 10;
-    const segments = lines.map((line) => segmentLine(line, size * 1.5));
+    const segments = lines.map((line) => segmentLine(line, size * 1.0));
     const fit = inferColumns(segments, 0.5);
     if (!fit) continue;
     const gaps = lines.slice(1).map((line, i) => lines[i]!.y - line.y);
@@ -553,7 +559,7 @@ function detectAlignedTables(
     .filter((g) => g > size * 0.6 && g < size * 3);
   const leading = median(gaps) || size * 1.4;
   const segments = new Map<Line, Segment[]>();
-  for (const line of flat) segments.set(line, segmentLine(line, Math.max(line.size * 1.5, 9)));
+  for (const line of flat) segments.set(line, segmentLine(line, Math.max(line.size * 1.1, 8)));
 
   let group: Line[] = [];
   const flush = () => {
@@ -597,6 +603,157 @@ function detectAlignedTables(
         group.push(line);
       else flush();
     }
+  }
+  flush();
+  return out;
+}
+
+/* ------------------- sparse tables with mixed-size cells ------------------ */
+
+const SCRIPT_TEXT = /^[\d()*†‡+\-−]{1,3}$/u;
+
+/** Footnote marks / superscripts printed beside a cell label sit on their own
+ * baseline; pull them onto the host run's baseline so they stay in that cell. */
+function attachScripts(runs: Run[]): Run[] {
+  const isFragment = (run: Run) => SCRIPT_TEXT.test(run.text.trim());
+  return runs.map((run) => {
+    if (!isFragment(run)) return run;
+    let host: Run | undefined;
+    for (const other of runs) {
+      if (other === run || isFragment(other) || !other.text.trim()) continue;
+      const gap = run.x - (other.x + other.width);
+      const dy = Math.abs(run.y - other.y);
+      if (
+        gap >= -1 &&
+        gap <= other.size * 0.6 &&
+        dy > 0.15 * other.size &&
+        dy <= 0.7 * other.size &&
+        run.size <= other.size * 1.05 &&
+        (!host || gap < run.x - (host.x + host.width))
+      )
+        host = other;
+    }
+    return host ? { ...run, y: host.y } : run;
+  });
+}
+
+/**
+ * Rows whose cells have different font sizes and baselines (small labels
+ * beside large, vertically centred figures) cannot be found on baselines.
+ * Here a row is a vertical block: consecutive lines closer than ~1.6 line
+ * heights belong together, a larger gap starts the next row. Columns are then
+ * inferred from the horizontal runs of every row, exactly like aligned tables.
+ */
+function detectSparseTables(
+  lines: Line[],
+  pageWidth: number,
+): { tables: TableModel[]; used: Set<Line> } {
+  const out = { tables: [] as TableModel[], used: new Set<Line>() };
+  const flat = lines.filter((line) => !line.runs.some((run) => run.rotated));
+  if (flat.length < 6 || !(pageWidth > 0)) return out;
+
+  // A caption ("表 1 …", "Table 2 …") always stands alone, even when printed
+  // close above the header row.
+  const caption = /^(表|图|Table|Fig\.?|Figure)\s*\d/u;
+  const clusters: Line[][] = [];
+  let afterCaption = false;
+  for (const line of flat) {
+    const current = clusters[clusters.length - 1];
+    const previous = current?.[current.length - 1];
+    const isCaption = caption.test(line.text.trim());
+    if (
+      previous &&
+      !isCaption &&
+      !afterCaption &&
+      previous.y - line.y <= 1.6 * Math.max(previous.size, line.size)
+    )
+      current!.push(line);
+    else clusters.push([line]);
+    afterCaption = isCaption;
+  }
+
+  interface Row {
+    lines: Line[];
+    runs: Run[];
+    segments: Segment[];
+  }
+  const build = (cluster: Line[]): Row | null => {
+    const runs = attachScripts(cluster.flatMap((line) => line.runs));
+    const gap = Math.max(5, textSize(runs) * 0.6);
+    // Blank runs (wide padding spaces) must not glue neighbouring cells together.
+    const sorted = runs.filter((run) => run.text.trim()).sort((a, b) => a.x - b.x || b.y - a.y);
+    const segments: Segment[] = [];
+    let end = -Infinity;
+    for (const run of sorted) {
+      const last = segments[segments.length - 1];
+      const previous = last?.runs[last.runs.length - 1];
+      // A figure printed at twice the label size starts its own cell even when
+      // the horizontal gap is small.
+      const sizeJump =
+        !!previous &&
+        // A small digit/mark beside a larger run is a superscript, not a cell.
+        !SCRIPT_TEXT.test((run.size < previous.size ? run : previous).text.trim()) &&
+        Math.max(run.size, previous.size) / Math.min(run.size, previous.size) >= 1.5;
+      if (!last || run.x - end > gap || sizeJump) {
+        segments.push({ x0: run.x, x1: run.x + run.width, runs: [run], text: '' });
+      } else {
+        last.runs.push(run);
+        last.x1 = Math.max(last.x1, run.x + run.width);
+      }
+      end = Math.max(end, run.x + run.width);
+    }
+    for (const segment of segments) segment.text = runsText(segment.runs).trim();
+    const tooLong = segments.some(
+      (segment) => segment.text.length > 30 || segment.x1 - segment.x0 > pageWidth * 0.5,
+    );
+    return tooLong ? null : { lines: cluster, runs, segments };
+  };
+
+  let group: Row[] = [];
+  let lastLine: Line | undefined;
+  const flush = () => {
+    // Captions / titles above or below are single-segment rows: keep them in the flow.
+    for (;;) {
+      const first = group[0];
+      if (first && (first.segments.length < 2 || caption.test(first.segments[0]!.text)))
+        group.shift();
+      else break;
+    }
+    while (group.length && group[group.length - 1]!.segments.length < 2) group.pop();
+    if (group.length >= 3) {
+      const rows = group.map((row) => row.segments);
+      const fit = inferColumns(rows, 0.6);
+      const texts = rows.flat().map((segment) => segment.text);
+      const meanLength = texts.reduce((n, t) => n + t.length, 0) / Math.max(1, texts.length);
+      if (fit && meanLength <= 26) {
+        const header = looksLikeHeader(rows.map((row) => row.map((segment) => segment.text)))
+          ? 1
+          : 0;
+        const allLines = group.flatMap((row) => row.lines);
+        const model = modelFromRows(
+          fit,
+          segmentRect(rows, allLines),
+          header,
+          false,
+          group.map((row) => row.lines[0]!),
+          0,
+        );
+        if (model) {
+          out.tables.push(model);
+          for (const line of allLines) out.used.add(line);
+        }
+      }
+    }
+    group = [];
+  };
+  for (const cluster of clusters) {
+    const row = build(cluster);
+    const top = cluster[0]!;
+    // A big vertical hole ends the table region.
+    if (lastLine && lastLine.y - top.y > 6 * Math.max(lastLine.size, top.size)) flush();
+    if (row) group.push(row);
+    else flush();
+    lastLine = cluster[cluster.length - 1];
   }
   flush();
   return out;
@@ -800,4 +957,4 @@ export function analyzeLayout(
   return result;
 }
 
-export { detectAlignedTables };
+export { detectAlignedTables, detectSparseTables };

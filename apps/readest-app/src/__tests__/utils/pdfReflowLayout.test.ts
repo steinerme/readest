@@ -166,3 +166,91 @@ describe('figure recognition', () => {
     expect(page.blocks.map((b) => b.kind)).toEqual(['paragraph']);
   });
 });
+
+describe('sparse tables with mixed-size cells (real book page geometry)', () => {
+  // Coordinates copied from a Chinese popular-science PDF: 8pt labels sit
+  // beside 22pt/17pt figures printed vertically centred in each row.
+  const sized = (str: string, x: number, y: number, size: number, width?: number): PdfTextItem => ({
+    str,
+    transform: [size, 0, 0, size, x, y],
+    width: width ?? str.length * size,
+    height: size,
+  });
+  const body = (str: string, y: number) => sized(str, 65, y, 13.5, 482);
+  const page128 = [
+    sized('总表面积（6面）', 103, 709, 10.1, 78),
+    sized('6', 185, 688, 22.5, 11),
+    sized(' ', 196, 688, 22.5, 81),
+    sized('24', 257, 695, 17.4, 18),
+    sized('体积（边长）', 103, 632, 10.1, 63),
+    sized('3', 166, 636, 10.1, 5),
+    sized('1', 185, 615, 22.5, 11),
+    sized(' ', 196, 615, 22.5, 134),
+    sized('8（重', 297, 636, 10.1, 26),
+    sized('量）', 297, 623, 10.1, 21),
+    sized('总表面积与体积', 103, 564, 10.1, 73),
+    sized('比', 103, 551, 10.1, 10),
+    sized('6', 185, 542, 22.5, 11),
+    sized('3', 257, 549, 17.4, 9),
+    body('正如以上所看到的，大方块冰单位体积所占的表面积要小于八个小方块。', 459),
+    body('总面积即正方体冰块六个表面所有的面积。这表明八个立方体冰块的总表面积', 441),
+  ];
+
+  it('reads labels and large figures as one 3x3 table without a column warning', () => {
+    const result = reflowPdfText(page128, 612, 792, true, empty);
+    expect(result.warnings).not.toContain('possible-multiple-columns');
+    const cells = result.blocks.filter((b) => b.kind === 'cell');
+    expect(cells.map((c) => c.text)).toEqual([
+      '总表面积（6面）',
+      '6',
+      '24',
+      '体积（边长）3',
+      '1',
+      '8（重量）',
+      '总表面积与体积比',
+      '6',
+      '3',
+    ]);
+    expect(cells[0]!.table).toMatchObject({ rows: 3, cols: 3 });
+    // Body text stays in the flow after the table.
+    expect(result.blocks.filter((b) => b.kind === 'paragraph')).toHaveLength(1);
+  });
+
+  it('keeps the table caption out of the table and ignores padding spaces', () => {
+    const items = [
+      body('说明文字说明文字说明文字说明文字说明文字说明文字', 400),
+      sized('表 1 大方块冰和小方块冰的数据变化', 76, 251, 10.1, 168),
+      sized('小方块冰', 197, 237, 10.1, 41),
+      sized(' ', 238, 237, 10.1, 58),
+      sized('大方块冰', 282, 237, 10.1, 41),
+      sized('边长', 103, 191, 10.1, 20),
+      sized('1', 185, 170, 22.5, 11),
+      sized('2', 257, 176, 17.4, 9),
+      sized('横切面面积', 103, 119, 10.1, 52),
+      sized('1', 185, 98, 22.5, 11),
+      sized('4', 257, 104, 17.4, 9),
+    ];
+    const result = reflowPdfText(items, 612, 792, true, empty);
+    const cells = result.blocks.filter((b) => b.kind === 'cell');
+    expect(cells.map((c) => c.text)).toEqual([
+      '',
+      '小方块冰',
+      '大方块冰',
+      '边长',
+      '1',
+      '2',
+      '横切面面积',
+      '1',
+      '4',
+    ]);
+    expect(result.blocks.some((b) => b.kind !== 'cell' && b.text.startsWith('表 1'))).toBe(true);
+  });
+
+  it('does not turn ordinary wrapped paragraphs into a table', () => {
+    const lines = Array.from({ length: 10 }, (_, i) =>
+      body(`这是第${i}行正文文字，用来确认普通段落不会被误判为表格结构。`, 700 - i * 17),
+    );
+    const result = reflowPdfText(lines, 612, 792, true, empty);
+    expect(result.blocks.some((b) => b.kind === 'cell')).toBe(false);
+  });
+});

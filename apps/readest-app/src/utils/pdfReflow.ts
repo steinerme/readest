@@ -1,5 +1,10 @@
 import type { PdfGraphics } from './pdfReflowGraphics';
-import { analyzeLayout, detectAlignedTables, type TableModel } from './pdfReflowLayout';
+import {
+  analyzeLayout,
+  detectAlignedTables,
+  detectSparseTables,
+  type TableModel,
+} from './pdfReflowLayout';
 import {
   buildLines,
   joinLines,
@@ -207,10 +212,18 @@ export function reflowPdfText(
   }
 
   let { lines } = buildLines(runs, pageWidth);
-  // Rule-less aligned tables are found on baselines, after ruled ones.
+  // Tables whose cells differ in size/baseline are found on row blocks first;
+  // rule-less aligned tables are then found on the remaining baselines.
+  const sparse = detectSparseTables(lines, pageWidth);
+  sparse.tables.forEach((table, i) => {
+    entries.push(...tableEntries(table, layout.tables.length + i, pageWidth, nextOrder));
+  });
+  if (sparse.used.size) lines = lines.filter((line) => !sparse.used.has(line));
   const aligned = detectAlignedTables(lines, pageWidth);
   aligned.tables.forEach((table, i) => {
-    entries.push(...tableEntries(table, layout.tables.length + i, pageWidth, nextOrder));
+    entries.push(
+      ...tableEntries(table, layout.tables.length + sparse.tables.length + i, pageWidth, nextOrder),
+    );
   });
   if (aligned.used.size) lines = lines.filter((line) => !aligned.used.has(line));
   const wideGapRows = lines.filter((line) => line.wideGap).length;
@@ -234,6 +247,7 @@ export function reflowPdfText(
   const separators = [
     ...layout.tables.map((t) => t.rect),
     ...aligned.tables.map((t) => t.rect),
+    ...sparse.tables.map((t) => t.rect),
     ...layout.figures.map((f) => f.rect),
   ];
   if (kept.length) {
