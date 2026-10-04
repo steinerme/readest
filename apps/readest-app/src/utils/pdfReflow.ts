@@ -1,3 +1,15 @@
+import type { PdfGraphics } from './pdfReflowGraphics';
+import { analyzeLayout, detectAlignedTables, type TableModel } from './pdfReflowLayout';
+import {
+  buildLines,
+  joinLines,
+  joinMapped,
+  median,
+  textSize,
+  type Line,
+  type Run,
+} from './pdfReflowLines';
+
 export interface PdfTextItem {
   str: string;
   transform: number[];
@@ -7,9 +19,35 @@ export interface PdfTextItem {
   dir?: string;
 }
 
+export interface ReflowTableCell {
+  /** Stable id shared by all cells of one table. */
+  id: number;
+  row: number;
+  col: number;
+  rowSpan: number;
+  colSpan: number;
+  header: boolean;
+  rows: number;
+  cols: number;
+  numeric: boolean;
+}
+
+export interface ReflowFigure {
+  /** PDF user-space rectangle relative to the page view origin (y up). */
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+}
+
 export interface ReflowBlock {
-  kind: 'paragraph' | 'note';
+  /** `cell` blocks are table cells: one block per cell so every index-based
+   * service (speech highlight, selection, citation) keeps working unchanged.
+   * `figure` blocks have no text; the page region is rendered as a picture. */
+  kind: 'paragraph' | 'note' | 'cell' | 'figure';
   text: string;
+  table?: ReflowTableCell;
+  figure?: ReflowFigure;
 }
 
 export interface ReflowPage {
@@ -20,98 +58,79 @@ export interface ReflowPage {
    * the source character offset for every displayed UTF-16 character (-1 = spacing). */
   sourceText?: string;
   sourceMap?: number[][];
+  /** Page size in PDF units, needed to render figure regions. */
+  pageWidth?: number;
+  pageHeight?: number;
 }
-
-type Run = {
-  text: string;
-  source: number[];
-  x: number;
-  y: number;
-  size: number;
-  width: number;
-  rotated: boolean;
-};
-type Line = {
-  runs: Run[];
-  y: number;
-  size: number;
-  x: number;
-  end: number;
-  text: string;
-  source: number[];
-};
 
 export const normalizePdfSpeechText = (text: string) =>
   text.normalize('NFKC').replace(/[\s\u00ad]/gu, '');
 
-function joinMapped(
-  left: { text: string; source: number[] },
-  right: { text: string; source: number[] },
-  space: boolean,
-  wrapped = false,
-) {
-  const text = joinText(left.text, right.text, space, wrapped);
-  const b = right.text.trimStart().trimEnd();
-  // joinText preserves the right's trailing whitespace only after a nonempty left.
-  const rightText = left.text ? right.text.trimStart() : b;
-  const prefix = text.length - rightText.length;
-  const source = left.source.slice(0, Math.min(prefix, left.text.trimEnd().length));
-  while (source.length < prefix) source.push(-1);
-  const rightStart = right.text.length - right.text.trimStart().length;
-  source.push(...right.source.slice(rightStart, rightStart + rightText.length));
-  return { text, source };
+const NUMERIC_CELL = /^[\s\d.,:%$¥€£+\-−–()/]+$/u;
+
+interface Entry {
+  block: ReflowBlock;
+  source: number[];
+  top: number;
+  order: number;
 }
 
-const cjk = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
-const closing = /^[,.;:!?，。；：！？、）】》」』〉〕］｝％%…]/u;
-const opening = /[(（【《「『〈〔［｛]$/u;
-
-function median(values: number[]): number {
-  if (!values.length) return 0;
-  const sorted = [...values].sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  return sorted.length % 2 ? sorted[mid]! : (sorted[mid - 1]! + sorted[mid]!) / 2;
-}
-
-function textSize(runs: Run[]): number {
-  const sorted = [...runs].sort((a, b) => a.size - b.size);
-  const total = sorted.reduce((n, run) => n + Math.max(1, run.text.trim().length), 0);
-  let weight = 0;
-  for (const run of sorted) {
-    weight += Math.max(1, run.text.trim().length);
-    if (weight >= total / 2) return run.size;
+function tableEntries(
+  table: TableModel,
+  id: number,
+  pageWidth: number,
+  next: () => number,
+): Entry[] {
+  const entries: Entry[] = [];
+  const cells = [...table.cells].sort((a, b) => a.row - b.row || a.col - b.col);
+  for (const cell of cells) {
+    const { lines } = buildLines(cell.runs, pageWidth);
+    const joined = joinLines(lines);
+    const text = joined.text.trim() ? joined.text : '';
+    // Cell text is trimmed here; keep the source map aligned with it.
+    const lead = joined.text.length - joined.text.trimStart().length;
+    const source = joined.source.slice(lead, lead + text.trimEnd().length);
+    entries.push({
+      block: {
+        kind: 'cell',
+        text: text.trim(),
+        table: {
+          id,
+          row: cell.row,
+          col: cell.col,
+          rowSpan: cell.rowSpan,
+          colSpan: cell.colSpan,
+          header: cell.header,
+          rows: table.rows,
+          cols: table.cols,
+          numeric: !!text && NUMERIC_CELL.test(text) && /\d/u.test(text),
+        },
+      },
+      source: text ? source.slice(0, text.trim().length) : [],
+      top: table.rect.y1,
+      order: next(),
+    });
   }
-  return 1;
-}
-
-// Geometry decides word spacing inside a line. Across wrapped lines, Latin
-// words need a space; CJK and punctuation do not. Only discretionary soft
-// hyphens are removed: a visible hyphen may be part of a compound or identifier.
-function joinText(left: string, right: string, space: boolean, wrapped = false): string {
-  if (!left) return right.trim();
-  if (!right.trim()) return left;
-  const a = left.trimEnd();
-  const b = right.trimStart();
-  if (wrapped && a.endsWith('\u00ad')) return a.slice(0, -1) + b;
-  if (wrapped && /[A-Za-z]-$/.test(a) && /^[a-z]/.test(b)) return a + b;
-  const last = Array.from(a).pop() || '';
-  const first = Array.from(b)[0] || '';
-  if (cjk.test(last) || cjk.test(first) || closing.test(b) || opening.test(a)) return a + b;
-  return a + (space ? ' ' : '') + b;
+  return entries;
 }
 
 /**
- * Conservative, dependency-free reflow for single-column horizontal pages.
+ * Conservative, dependency-free reflow for horizontal pages.
  * Coordinates are unmodified PDF coordinates (larger baseline y is higher).
  * Warnings are stable codes: empty-text, rotated-text,
  * possible-multiple-columns, invalid-text-item. Suspected columns are retained
  * in visual row order, not silently discarded or claimed to be fully reflowed.
+ *
+ * When `graphics` (bitmaps, rules, vector shapes) is supplied, tables and
+ * figures are recognised and emitted as `cell` / `figure` blocks in reading
+ * order; without it the behaviour is the text-only reflow.
  */
 export function reflowPdfText(
   items: PdfTextItem[],
   pageWidth: number,
   pageHeight: number,
   withSourceMap = false,
+  graphics?: PdfGraphics,
 ): ReflowPage {
   const result: ReflowPage = { blocks: [], removedPageNumbers: [], warnings: [] };
   let sourceText = '';
@@ -123,7 +142,7 @@ export function reflowPdfText(
   const warn = (code: string) => {
     if (!result.warnings.includes(code)) result.warnings.push(code);
   };
-  const runs: Run[] = [];
+  const allRuns: Run[] = [];
   for (const item of items) {
     const source: number[] = [];
     let text = '';
@@ -151,7 +170,7 @@ export function reflowPdfText(
     }
     const rotated = Math.abs(Math.atan2(b!, a!)) > 0.12 || item.dir === 'ttb';
     if (rotated) warn('rotated-text');
-    runs.push({
+    allRuns.push({
       text,
       source,
       x: x!,
@@ -161,82 +180,40 @@ export function reflowPdfText(
       rotated,
     });
   }
-  if (!runs.length) {
+
+  const layout = analyzeLayout(allRuns, graphics, pageWidth, pageHeight);
+  const runs = layout.flowRuns;
+  const entries: Entry[] = [];
+  let order = 0;
+  const nextOrder = () => order++;
+  layout.tables.forEach((table, id) => {
+    entries.push(...tableEntries(table, id, pageWidth, nextOrder));
+  });
+  if (layout.figures.length) {
+    result.pageWidth = pageWidth;
+    result.pageHeight = pageHeight;
+  }
+  for (const figure of layout.figures)
+    entries.push({
+      block: { kind: 'figure', text: '', figure: { ...figure.rect } },
+      source: [],
+      top: figure.rect.y1,
+      order: nextOrder(),
+    });
+
+  if (!runs.length && !entries.length) {
     warn('empty-text');
     return result;
   }
 
-  // Seed lines with large glyphs first so a superscript cannot pull the body
-  // baseline upward. Font-scaled tolerance avoids fixed-point assumptions.
-  const lines: Line[] = [];
-  for (const run of [...runs].sort((a, b) => b.size - a.size || b.y - a.y || a.x - b.x)) {
-    let best: Line | undefined;
-    let bestDistance = Infinity;
-    for (const line of lines) {
-      if (run.rotated || line.runs[0]!.rotated) continue;
-      const distance = Math.abs(run.y - line.y);
-      const small = run.size < line.size * 0.8;
-      const tolerance = line.size * (small ? 0.65 : 0.28);
-      // Small raised/lowered glyphs must also be horizontally near this line.
-      const horizontalGap = Math.max(line.x - (run.x + run.width), run.x - line.end, 0);
-      if (
-        distance <= tolerance &&
-        (!small || distance <= line.size * 0.28 || horizontalGap <= line.size * 1.5) &&
-        distance < bestDistance
-      ) {
-        best = line;
-        bestDistance = distance;
-      }
-    }
-    if (best) {
-      best.runs.push(run);
-      best.x = Math.min(best.x, run.x);
-      best.end = Math.max(best.end, run.x + run.width);
-    } else {
-      lines.push({
-        runs: [run],
-        y: run.y,
-        size: run.size,
-        x: run.x,
-        end: run.x + run.width,
-        text: '',
-        source: [],
-      });
-    }
-  }
-  lines.sort((a, b) => b.y - a.y || a.x - b.x);
-  let wideGapRows = 0;
-  for (const line of lines) {
-    line.runs.sort((a, b) => a.x - b.x);
-    line.size = textSize(line.runs);
-    let previous: Run | undefined;
-    let wideGap = false;
-    for (const run of line.runs) {
-      const gap = previous ? run.x - (previous.x + previous.width) : 0;
-      if (
-        previous &&
-        pageWidth > 0 &&
-        gap > Math.max(pageWidth * 0.12, line.size * 4) &&
-        previous.x + previous.width < pageWidth * 0.65 &&
-        run.x > pageWidth * 0.35
-      )
-        wideGap = true;
-      const explicitSpace = !!previous && (/\s$/.test(previous.text) || /^\s/.test(run.text));
-      const superscript =
-        !!previous &&
-        Math.min(previous.size, run.size) < Math.max(previous.size, run.size) * 0.8 &&
-        Math.abs(previous.y - run.y) > line.size * 0.15;
-      const joined = joinMapped(
-        line,
-        run,
-        !superscript && (explicitSpace || gap > line.size * 0.12),
-      );
-      line.text = joined.text;
-      line.source = joined.source;
-      previous = run;
-    }
-    if (wideGap) wideGapRows++;
-  }
+  let { lines } = buildLines(runs, pageWidth);
+  // Rule-less aligned tables are found on baselines, after ruled ones.
+  const aligned = detectAlignedTables(lines, pageWidth);
+  aligned.tables.forEach((table, i) => {
+    entries.push(...tableEntries(table, layout.tables.length + i, pageWidth, nextOrder));
+  });
+  if (aligned.used.size) lines = lines.filter((line) => !aligned.used.has(line));
+  const wideGapRows = lines.filter((line) => line.wideGap).length;
   const columns = wideGapRows >= 2;
   if (columns) warn('possible-multiple-columns');
 
@@ -254,53 +231,81 @@ export function reflowPdfText(
     result.removedPageNumbers.push(line.text);
     return false;
   });
-  if (!kept.length) return result;
-  const bodySize = textSize(kept.flatMap((line) => line.runs));
-  const bodyLines = kept.filter(
-    (line) => line.size >= bodySize * 0.85 && line.size <= bodySize * 1.15,
-  );
-  const gaps = bodyLines
-    .slice(1)
-    .map((line, i) => bodyLines[i]!.y - line.y)
-    .filter((gap) => gap > bodySize * 0.6 && gap < bodySize * 2.1);
-  const leading = median(gaps) || bodySize * 1.3;
-  const leftMargin = Math.min(...kept.map((line) => line.x));
-  let previous: Line | undefined;
-  for (const line of kept) {
-    const kind: ReflowBlock['kind'] = line.size < bodySize * 0.85 ? 'note' : 'paragraph';
-    const last = result.blocks[result.blocks.length - 1];
-    const gap = previous ? previous.y - line.y : Infinity;
-    const sizeChange =
-      previous && Math.max(previous.size, line.size) / Math.min(previous.size, line.size) > 1.18;
-    const indented =
-      previous &&
-      line.x - leftMargin > line.size * 1.2 &&
-      previous.x - leftMargin <= line.size * 0.7;
-    const rotated =
-      line.runs.some((run) => run.rotated) || previous?.runs.some((run) => run.rotated);
-    const limit = kind === 'note' ? line.size * 1.8 : Math.max(leading * 1.45, bodySize * 1.65);
-    if (
-      !last ||
-      last.kind !== kind ||
-      gap > limit ||
-      sizeChange ||
-      indented ||
-      columns ||
-      rotated
-    ) {
-      result.blocks.push({ kind, text: line.text });
-      blockSources.push(line.source);
-    } else {
-      const joined = joinMapped(
-        { text: last.text, source: blockSources[blockSources.length - 1]! },
-        line,
-        true,
-        true,
-      );
-      last.text = joined.text;
-      blockSources[blockSources.length - 1] = joined.source;
+  const separators = [
+    ...layout.tables.map((t) => t.rect),
+    ...aligned.tables.map((t) => t.rect),
+    ...layout.figures.map((f) => f.rect),
+  ];
+  if (kept.length) {
+    const bodySize = textSize(kept.flatMap((line) => line.runs));
+    const bodyLines = kept.filter(
+      (line) => line.size >= bodySize * 0.85 && line.size <= bodySize * 1.15,
+    );
+    const gaps = bodyLines
+      .slice(1)
+      .map((line, i) => bodyLines[i]!.y - line.y)
+      .filter((gap) => gap > bodySize * 0.6 && gap < bodySize * 2.1);
+    const leading = median(gaps) || bodySize * 1.3;
+    const leftMargin = Math.min(...kept.map((line) => line.x));
+    let previous: Line | undefined;
+    let current: Entry | undefined;
+    for (const line of kept) {
+      const kind: ReflowBlock['kind'] = line.size < bodySize * 0.85 ? 'note' : 'paragraph';
+      const gap = previous ? previous.y - line.y : Infinity;
+      const sizeChange =
+        previous && Math.max(previous.size, line.size) / Math.min(previous.size, line.size) > 1.18;
+      const indented =
+        previous &&
+        line.x - leftMargin > line.size * 1.2 &&
+        previous.x - leftMargin <= line.size * 0.7;
+      const rotated =
+        line.runs.some((run) => run.rotated) || previous?.runs.some((run) => run.rotated);
+      // A table or figure sitting between two lines always splits the block.
+      const separated =
+        !!previous &&
+        separators.some((rect) => {
+          const mid = (rect.y0 + rect.y1) / 2;
+          return mid < previous!.y && mid > line.y;
+        });
+      const limit = kind === 'note' ? line.size * 1.8 : Math.max(leading * 1.45, bodySize * 1.65);
+      if (
+        !current ||
+        current.block.kind !== kind ||
+        gap > limit ||
+        sizeChange ||
+        indented ||
+        columns ||
+        rotated ||
+        separated
+      ) {
+        current = {
+          block: { kind, text: line.text },
+          source: line.source,
+          top: line.y,
+          order: nextOrder(),
+        };
+        entries.push(current);
+      } else {
+        const joined = joinMapped(
+          { text: current.block.text, source: current.source },
+          line,
+          true,
+          true,
+        );
+        current.block.text = joined.text;
+        current.source = joined.source;
+      }
+      previous = line;
     }
-    previous = line;
+  }
+  if (!entries.length) return result;
+
+  // Reading order: top to bottom. Text already comes in visual row order, so
+  // a stable sort only interleaves tables and figures at their vertical place.
+  entries.sort((a, b) => b.top - a.top || a.order - b.order);
+  for (const entry of entries) {
+    result.blocks.push(entry.block);
+    blockSources.push(entry.source);
   }
   return result;
 }

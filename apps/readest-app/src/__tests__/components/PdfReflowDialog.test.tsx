@@ -566,3 +566,138 @@ it('rejects an AI citation whose original PDF page cannot be reached', async () 
     ).rejects.toThrow('Citation navigation failed');
   });
 });
+
+describe('tables and figures in the reflow page', () => {
+  const tableData = () =>
+    Promise.resolve({
+      items: [
+        { str: '名称', transform: [12, 0, 0, 12, 66, 683], width: 24, height: 12 },
+        { str: '数量', transform: [12, 0, 0, 12, 206, 683], width: 24, height: 12 },
+        { str: '苹果', transform: [12, 0, 0, 12, 66, 659], width: 24, height: 12 },
+        { str: '12', transform: [12, 0, 0, 12, 206, 659], width: 12, height: 12 },
+      ],
+      width: 612,
+      height: 792,
+      rotation: 0,
+    });
+  const ops = {
+    save: 10,
+    restore: 11,
+    transform: 12,
+    constructPath: 91,
+    stroke: 20,
+    paintImageXObject: 85,
+  };
+  const rule = (x0: number, y0: number, x1: number, y1: number) => [
+    ops.stroke,
+    [new Float32Array([0, x0, y0, 1, x1, y1])],
+    null,
+  ];
+  const graphics = (withImage: boolean) =>
+    Promise.resolve({
+      fnArray: [
+        ...[0, 0, 0, 0, 0].map(() => ops.constructPath),
+        ...(withImage ? [ops.save, ops.transform, ops.paintImageXObject, ops.restore] : []),
+      ],
+      argsArray: [
+        rule(60, 700, 300, 700),
+        rule(60, 676, 300, 676),
+        rule(60, 652, 300, 652),
+        rule(60, 652, 60, 700),
+        rule(200, 652, 200, 700),
+        ...(withImage ? [null, [200, 0, 0, 120, 100, 300], ['img'], null] : []),
+      ],
+      ops,
+      width: 612,
+      height: 792,
+      origin: [0, 0],
+      rotation: 0,
+    });
+
+  it('renders a recognised table as a real table with header cells and keeps block indices', async () => {
+    mocks.pages = [
+      { getReflowText: vi.fn(tableData), getReflowGraphics: vi.fn(() => graphics(false)) } as never,
+    ];
+    const { container } = render(<PdfReflowDialog bookKey='pdf-1' onClose={vi.fn()} />);
+    await screen.findByText('苹果');
+    const table = container.querySelector('table.pdf-reflow-table')!;
+    expect(table).toBeTruthy();
+    expect(table.querySelectorAll('th')).toHaveLength(2);
+    expect(table.querySelectorAll('td')).toHaveLength(2);
+    expect(
+      Array.from(table.querySelectorAll('[data-reflow-block]')).map((e) =>
+        e.getAttribute('data-reflow-block'),
+      ),
+    ).toEqual(['0', '1', '2', '3']);
+    expect(container.querySelector('td[data-numeric]')?.textContent).toBe('12');
+  });
+
+  it('falls back to plain text when graphics extraction fails', async () => {
+    mocks.pages = [
+      {
+        getReflowText: vi.fn(tableData),
+        getReflowGraphics: vi.fn(() => Promise.reject(new Error('boom'))),
+      } as never,
+    ];
+    const { container } = render(<PdfReflowDialog bookKey='pdf-1' onClose={vi.fn()} />);
+    await screen.findByText(/名称/);
+    expect(container.querySelector('table')).toBeNull();
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+  });
+
+  it('shows a lazily rendered figure and a tap on it neither turns pages nor reveals chrome', async () => {
+    const renderRegion = vi.fn(async () => 'blob:figure-1');
+    mocks.pages = [
+      {
+        getReflowText: vi.fn(() =>
+          Promise.resolve({ items: [], width: 612, height: 792, rotation: 0 }),
+        ),
+        getReflowGraphics: vi.fn(() =>
+          graphics(true).then((g) => ({
+            ...g,
+            fnArray: g.fnArray.slice(5),
+            argsArray: g.argsArray.slice(5),
+          })),
+        ),
+        renderReflowRegion: renderRegion,
+      } as never,
+      { getReflowText: vi.fn(() => textPage('第二页正文。')) },
+    ];
+    const { container } = render(<PdfReflowDialog bookKey='pdf-1' onClose={vi.fn()} />);
+    const image = await waitFor(() => {
+      const found = container.querySelector('figure.pdf-reflow-figure img');
+      expect(found).toBeTruthy();
+      return found as HTMLImageElement;
+    });
+    expect(image.getAttribute('src')).toBe('blob:figure-1');
+    expect(renderRegion).toHaveBeenCalledTimes(1);
+    expect(container.querySelector('figure')?.getAttribute('data-reflow-figure')).toBe('0');
+    mocks.setHovered.mockClear();
+    mocks.goTo.mockClear();
+    fireEvent.pointerDown(image, { clientX: 5, clientY: 5 });
+    fireEvent.pointerUp(image, { clientX: 5, clientY: 5 });
+    fireEvent.click(image, { clientX: 5, clientY: 5 });
+    await Promise.resolve();
+    expect(mocks.goTo).not.toHaveBeenCalled();
+  });
+
+  it('shows a visible notice when a figure cannot be rendered', async () => {
+    mocks.pages = [
+      {
+        getReflowText: vi.fn(() =>
+          Promise.resolve({ items: [], width: 612, height: 792, rotation: 0 }),
+        ),
+        getReflowGraphics: vi.fn(() =>
+          graphics(true).then((g) => ({
+            ...g,
+            fnArray: g.fnArray.slice(5),
+            argsArray: g.argsArray.slice(5),
+          })),
+        ),
+        renderReflowRegion: vi.fn(async () => null),
+      } as never,
+    ];
+    render(<PdfReflowDialog bookKey='pdf-1' onClose={vi.fn()} />);
+    expect(await screen.findByText(/could not be shown/i)).toBeTruthy();
+  });
+});

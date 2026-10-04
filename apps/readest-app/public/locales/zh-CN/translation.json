@@ -2421,6 +2421,8 @@
   "Could not read this page. Please use the original PDF view.": "无法读取本页文字，请切回原版查看。",
   "This page may not reflow correctly. Please compare it with the original.": "本页可能无法准确重排，请对照原页阅读。",
   "No usable text on this page. View the original page; OCR is not included.": "本页没有可用文字，请查看原页。本版本不含 OCR。",
+  "Figure": "图",
+  "Figure could not be shown. Compare with the original page.": "此图无法显示，请对照原页。",
   "Could not return to this PDF page.": "无法跳转到对应原页，可关闭重排后手动定位。",
   "Original PDF Page": "PDF 原文件页码",
   "Reflow Settings": "重排设置",

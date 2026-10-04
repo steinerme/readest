@@ -38,6 +38,70 @@
   border-inline-start: 2px solid var(--color-base-300);
   white-space: pre-wrap;
 }
+.pdf-reflow-table-wrap {
+  margin: 0 0 1.3em;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  border: 1px solid var(--color-base-300);
+  border-radius: 8px;
+  /* Horizontal pan inside the table, vertical pan stays with the page. */
+  touch-action: pan-x pan-y;
+}
+.pdf-reflow-table {
+  border-collapse: collapse;
+  width: max-content;
+  min-width: 100%;
+  font-size: 0.86em;
+  line-height: 1.5;
+}
+.pdf-reflow-table th,
+.pdf-reflow-table td {
+  padding: 0.45em 0.7em;
+  border: 1px solid var(--color-base-300);
+  vertical-align: top;
+  text-align: start;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  min-width: 4.5em;
+  max-width: 22em;
+}
+.pdf-reflow-table th {
+  font-weight: 600;
+  background: color-mix(in srgb, var(--color-base-content) 7%, var(--color-base-100));
+}
+.pdf-reflow-table td[data-numeric],
+.pdf-reflow-table th[data-numeric] {
+  text-align: end;
+  font-variant-numeric: tabular-nums;
+}
+.pdf-reflow-table tbody tr:nth-child(even) td {
+  background: color-mix(in srgb, var(--color-base-content) 3%, var(--color-base-100));
+}
+.pdf-reflow-figure {
+  margin: 0 auto 1.3em;
+  text-align: center;
+}
+.pdf-reflow-figure img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 6px;
+  background: #fff;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+.pdf-reflow-figure-skeleton {
+  width: 100%;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--color-base-content) 8%, var(--color-base-100));
+}
+.pdf-reflow-figure-failed {
+  padding: 12px;
+  font-size: 13px;
+  border: 1px dashed var(--color-base-300);
+  border-radius: 6px;
+}
 .pdf-reflow-warning {
   font-size: 14px;
   padding: 12px;
@@ -83,6 +147,13 @@
   .pdf-reflow-reader[data-chrome-panel='true'] .pdf-reflow-listening-dock {
     padding-block: 4px;
   }
+}
+html[data-eink='true'] .pdf-reflow-table th {
+  background: transparent;
+  border-width: 2px;
+}
+html[data-eink='true'] .pdf-reflow-table tbody tr:nth-child(even) td {
+  background: transparent;
 }
 html[data-eink='true'] .pdf-reflow-page mark[data-reflow-tts] {
   background: transparent;

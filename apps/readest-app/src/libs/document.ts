@@ -57,6 +57,21 @@ export interface SectionItem {
     height: number;
     rotation: number;
   }>;
+  // PDF only: operator list for table rules / image placements / vector shapes.
+  getReflowGraphics?: () => Promise<{
+    fnArray: ArrayLike<number>;
+    argsArray: ArrayLike<unknown>;
+    ops: Record<string, number>;
+    width: number;
+    height: number;
+    origin: [number, number];
+    rotation: number;
+  }>;
+  // PDF only: render one figure region (view-origin PDF space) to an object URL.
+  renderReflowRegion?: (
+    rect: { x0: number; y0: number; x1: number; y1: number },
+    maxWidth?: number,
+  ) => Promise<string | null>;
 
   // EPUB 3 Media Overlays: the manifest item of this section's SMIL file, or
   // null when the section has no recorded narration. Populated by foliate's

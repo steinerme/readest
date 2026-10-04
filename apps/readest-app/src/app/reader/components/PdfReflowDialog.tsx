@@ -13,7 +13,10 @@ import { useReflowSelectionMenu } from '../hooks/useReflowSelectionMenu';
 import { useBookDataStore } from '@/store/bookDataStore';
 import { useReaderStore } from '@/store/readerStore';
 import { useTranslation } from '@/hooks/useTranslation';
-import { reflowPdfText, type ReflowPage } from '@/utils/pdfReflow';
+import { reflowPdfText, type ReflowBlock, type ReflowPage } from '@/utils/pdfReflow';
+import { extractPdfGraphics, type PdfGraphics } from '@/utils/pdfReflowGraphics';
+import { groupReflowBlocks } from '@/utils/pdfReflowGroups';
+import PdfReflowFigure from './PdfReflowFigure';
 import '@/styles/pdf-reflow.css';
 import { readReflowSession, writeReflowSession } from '@/utils/pdfReflowSession';
 import { getPdfRendererPage, isPdfPageVisible } from '@/utils/pdfRendererPage';
@@ -108,11 +111,21 @@ const PdfReflowDialog = ({ bookKey, initialPage, onClose, onGoToLibrary }: Props
           const section = bookDoc?.sections[page];
           if (!section?.getReflowText) throw new Error('PDF text unavailable');
           const data = await section.getReflowText();
-          // Coordinate reconstruction here only supports upright single columns.
+          // Graphics are optional evidence: any failure degrades to text-only.
+          let graphics: PdfGraphics | undefined;
+          if (data.rotation % 360 === 0 && section.getReflowGraphics) {
+            try {
+              const raw = await section.getReflowGraphics();
+              graphics = extractPdfGraphics(raw, raw.ops, raw.origin, data.width, data.height);
+            } catch {
+              graphics = undefined;
+            }
+          }
+          // Coordinate reconstruction here only supports upright pages.
           parsed =
             data.rotation % 360 !== 0
               ? { blocks: [], removedPageNumbers: [], warnings: ['rotated-page'] }
-              : reflowPdfText(data.items, data.width, data.height, true);
+              : reflowPdfText(data.items, data.width, data.height, true, graphics);
           if (!current) return;
           cacheRef.current.set(page, parsed);
           while (cacheRef.current.size > 12) {
@@ -440,6 +453,75 @@ const PdfReflowDialog = ({ bookKey, initialPage, onClose, onGoToLibrary }: Props
     });
   }, [config?.booknotes, result, view, page, relocationEpoch]);
 
+  const renderBlockParts = (block: ReflowBlock, i: number) => {
+    const spoken = tts.highlights.filter((h) => h.block === i);
+    const notes = annotations.filter((h) => h.block === i);
+    const points = [
+      ...new Set([
+        0,
+        block.text.length,
+        ...spoken.flatMap((h) => [h.start, h.end]),
+        ...notes.flatMap((h) => [h.start, h.end]),
+      ]),
+    ].sort((a, b) => a - b);
+    const parts = points.slice(0, -1).map((start, j) => {
+      const end = points[j + 1]!;
+      const speech = spoken.some((h) => start >= h.start && end <= h.end);
+      const annotation = notes.find((h) => start >= h.start && end <= h.end)?.note;
+      const text = block.text.slice(start, end);
+      if (annotation)
+        return (
+          <mark
+            key={start}
+            data-reflow-tts={speech || undefined}
+            data-reflow-annotation={annotation.cfi}
+            style={{
+              background: speech
+                ? undefined
+                : annotation.style === 'highlight'
+                  ? (getHighlightColorHex(settings, annotation.color) ?? '#f8d878')
+                  : 'transparent',
+              textDecoration: annotation.style !== 'highlight' ? 'underline' : undefined,
+              textDecorationStyle: annotation.style === 'squiggly' ? 'wavy' : undefined,
+            }}
+            onClick={(event) => {
+              event.stopPropagation();
+              const range = document.createRange();
+              range.selectNodeContents(event.currentTarget);
+              void eventDispatcher.dispatch('footnote-selection', {
+                key: bookKey,
+                index: page,
+                range,
+                cfi: annotation.cfi,
+                annotated: true,
+                reflow: true,
+                originalRange: (() => {
+                  try {
+                    const doc = view?.renderer
+                      .getContents()
+                      .find((item) => item.index === page)?.doc;
+                    return doc ? view?.resolveCFI(annotation.cfi).anchor(doc) : undefined;
+                  } catch {
+                    return undefined;
+                  }
+                })(),
+              });
+            }}
+          >
+            {text}
+          </mark>
+        );
+      return speech ? (
+        <mark data-reflow-tts key={start}>
+          {text}
+        </mark>
+      ) : (
+        text
+      );
+    });
+    return parts;
+  };
+
   const goPage = (next: number) => {
     void navigate(next);
   };
@@ -571,82 +653,63 @@ const PdfReflowDialog = ({ bookKey, initialPage, onClose, onGoToLibrary }: Props
                 {_('No usable text on this page. View the original page; OCR is not included.')}
               </p>
             )}
-            {result.blocks.map((block, i) => {
-              const spoken = tts.highlights.filter((h) => h.block === i);
-              const notes = annotations.filter((h) => h.block === i);
-              const points = [
-                ...new Set([
-                  0,
-                  block.text.length,
-                  ...spoken.flatMap((h) => [h.start, h.end]),
-                  ...notes.flatMap((h) => [h.start, h.end]),
-                ]),
-              ].sort((a, b) => a - b);
-              const parts = points.slice(0, -1).map((start, j) => {
-                const end = points[j + 1]!;
-                const speech = spoken.some((h) => start >= h.start && end <= h.end);
-                const annotation = notes.find((h) => start >= h.start && end <= h.end)?.note;
-                const text = block.text.slice(start, end);
-                if (annotation)
-                  return (
-                    <mark
-                      key={start}
-                      data-reflow-tts={speech || undefined}
-                      data-reflow-annotation={annotation.cfi}
-                      style={{
-                        background: speech
-                          ? undefined
-                          : annotation.style === 'highlight'
-                            ? (getHighlightColorHex(settings, annotation.color) ?? '#f8d878')
-                            : 'transparent',
-                        textDecoration: annotation.style !== 'highlight' ? 'underline' : undefined,
-                        textDecorationStyle: annotation.style === 'squiggly' ? 'wavy' : undefined,
-                      }}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        const range = document.createRange();
-                        range.selectNodeContents(event.currentTarget);
-                        void eventDispatcher.dispatch('footnote-selection', {
-                          key: bookKey,
-                          index: page,
-                          range,
-                          cfi: annotation.cfi,
-                          annotated: true,
-                          reflow: true,
-                          originalRange: (() => {
-                            try {
-                              const doc = view?.renderer
-                                .getContents()
-                                .find((item) => item.index === page)?.doc;
-                              return doc ? view?.resolveCFI(annotation.cfi).anchor(doc) : undefined;
-                            } catch {
-                              return undefined;
-                            }
-                          })(),
-                        });
-                      }}
-                    >
-                      {text}
-                    </mark>
-                  );
-                return speech ? (
-                  <mark data-reflow-tts key={start}>
-                    {text}
-                  </mark>
-                ) : (
-                  text
-                );
-              });
-              return block.kind === 'note' ? (
-                <aside data-reflow-block={i} className='pdf-reflow-note' key={i}>
-                  {parts}
+            {groupReflowBlocks(result.blocks).map((group) =>
+              group.type === 'table' ? (
+                <div className='pdf-reflow-table-wrap' key={`table-${group.id}`} tabIndex={0}>
+                  <table className='pdf-reflow-table'>
+                    <tbody>
+                      {group.rows.map((row) => (
+                        <tr key={row.row}>
+                          {row.cells.map(({ block, index }) => {
+                            const Tag = block.table!.header ? 'th' : 'td';
+                            return (
+                              <Tag
+                                key={index}
+                                data-reflow-block={index}
+                                data-numeric={block.table!.numeric || undefined}
+                                scope={block.table!.header ? 'col' : undefined}
+                                rowSpan={
+                                  block.table!.rowSpan > 1 ? block.table!.rowSpan : undefined
+                                }
+                                colSpan={
+                                  block.table!.colSpan > 1 ? block.table!.colSpan : undefined
+                                }
+                              >
+                                {renderBlockParts(block, index)}
+                              </Tag>
+                            );
+                          })}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : group.block.kind === 'figure' ? (
+                <PdfReflowFigure
+                  key={`figure-${group.index}`}
+                  index={group.index}
+                  block={group.block}
+                  page={page}
+                  pageWidth={result.pageWidth}
+                  pageHeight={result.pageHeight}
+                  render={bookDoc?.sections[page]?.renderReflowRegion}
+                  label={_('Figure')}
+                  failedLabel={_('Figure could not be shown. Compare with the original page.')}
+                />
+              ) : group.block.kind === 'note' ? (
+                <aside
+                  data-reflow-block={group.index}
+                  className='pdf-reflow-note'
+                  key={group.index}
+                >
+                  {renderBlockParts(group.block, group.index)}
                 </aside>
               ) : (
-                <p data-reflow-block={i} key={i}>
-                  {parts}
+                <p data-reflow-block={group.index} key={group.index}>
+                  {renderBlockParts(group.block, group.index)}
                 </p>
-              );
-            })}
+              ),
+            )}
           </>
         )}
         <nav className='pdf-reflow-end-navigation' aria-label={_('Page Navigation')}>
