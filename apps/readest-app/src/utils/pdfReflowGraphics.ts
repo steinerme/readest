@@ -77,6 +77,15 @@ const unitSquareBox = (m: Matrix): Rect => {
   return { x0: Math.min(...xs), y0: Math.min(...ys), x1: Math.max(...xs), y1: Math.max(...ys) };
 };
 
+/** True when the image's x axis is not (close to) a multiple of 90°. Page
+ * watermarks are typically stamped at 30–45°; real figures are upright. */
+const tilted = (m: Matrix): boolean => {
+  if (Math.hypot(m[0], m[1]) < 1e-6) return false;
+  const angle = (Math.atan2(m[1], m[0]) * 180) / Math.PI;
+  const off = Math.abs(((angle % 90) + 90) % 90);
+  return Math.min(off, 90 - off) > 3;
+};
+
 const EDGE_EPS = 0.4;
 const THIN_RULE = 2.6;
 
@@ -279,6 +288,12 @@ export function extractPdfGraphics(
     const rawShapes: Rect[] = [];
     const rawFills: Rect[] = [];
     const rawImages: Rect[] = [];
+    const imageIds: Array<string | undefined> = [];
+    const pushImage = (rect: Rect, id?: unknown, skewed = false) => {
+      if (skewed) return;
+      rawImages.push(rect);
+      imageIds.push(typeof id === 'string' ? id : undefined);
+    };
     let ctm: Matrix = IDENTITY;
     const stack: Matrix[] = [];
     const { fnArray, argsArray } = list;
@@ -311,7 +326,7 @@ export function extractPdfGraphics(
             fills: rawFills,
           });
         } else if (IMAGE.has(fn)) {
-          rawImages.push(unitSquareBox(ctm));
+          pushImage(unitSquareBox(ctm), args?.[0], tilted(ctm));
         } else if (fn === IMAGE_REPEAT) {
           // [objId, scaleX, scaleY, positions]
           const [, sx, sy, positions] = args as [unknown, number, number, ArrayLike<number>];
@@ -347,10 +362,16 @@ export function extractPdfGraphics(
       }
     }
     const [ox, oy] = origin;
-    for (const image of rawImages) {
+    // The same bitmap stamped four or more times is a tiled watermark or
+    // texture, never a figure.
+    const uses = new Map<string, number>();
+    for (const id of imageIds) if (id) uses.set(id, (uses.get(id) ?? 0) + 1);
+    rawImages.forEach((image, index) => {
+      const id = imageIds[index];
+      if (id && (uses.get(id) ?? 0) >= 4) return;
       const rect = clampRect(shift(image, ox, oy), pageWidth, pageHeight);
       if (rect) result.images.push(rect);
-    }
+    });
     for (const shape of rawShapes) {
       const rect = clampRect(shift(shape, ox, oy), pageWidth, pageHeight);
       if (rect) result.shapes.push(rect);

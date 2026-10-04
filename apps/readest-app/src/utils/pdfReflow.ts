@@ -214,12 +214,23 @@ export function reflowPdfText(
   let { lines } = buildLines(runs, pageWidth);
   // Tables whose cells differ in size/baseline are found on row blocks first;
   // rule-less aligned tables are then found on the remaining baselines.
-  const sparse = detectSparseTables(lines, pageWidth);
+  const inCode = (line: Line) => {
+    const mid = line.y + line.size * 0.3;
+    return layout.codeBoxes.some(
+      (box) => line.x >= box.x0 - 2 && line.end <= box.x1 + 2 && mid >= box.y0 && mid <= box.y1,
+    );
+  };
+  const codeLines = new Set(lines.filter(inCode));
+  const tableCandidates = lines.filter((line) => !codeLines.has(line));
+  const sparse = detectSparseTables(tableCandidates, pageWidth);
   sparse.tables.forEach((table, i) => {
     entries.push(...tableEntries(table, layout.tables.length + i, pageWidth, nextOrder));
   });
   if (sparse.used.size) lines = lines.filter((line) => !sparse.used.has(line));
-  const aligned = detectAlignedTables(lines, pageWidth);
+  const aligned = detectAlignedTables(
+    lines.filter((line) => !codeLines.has(line)),
+    pageWidth,
+  );
   aligned.tables.forEach((table, i) => {
     entries.push(
       ...tableEntries(table, layout.tables.length + sparse.tables.length + i, pageWidth, nextOrder),
@@ -289,6 +300,8 @@ export function reflowPdfText(
         sizeChange ||
         indented ||
         columns ||
+        codeLines.has(line) ||
+        (!!previous && codeLines.has(previous)) ||
         rotated ||
         separated
       ) {

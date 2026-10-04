@@ -254,3 +254,59 @@ describe('sparse tables with mixed-size cells (real book page geometry)', () => 
     expect(result.blocks.some((b) => b.kind === 'cell')).toBe(false);
   });
 });
+
+describe('page watermarks, paper fills and code listings', () => {
+  const OPS = {
+    save: 10,
+    restore: 11,
+    transform: 12,
+    constructPath: 91,
+    paintImageXObject: 85,
+  };
+  it('drops a bitmap stamped many times (tiled watermark) and tilted stamps', () => {
+    const fn: number[] = [];
+    const args: unknown[] = [];
+    for (let i = 0; i < 6; i++) {
+      fn.push(OPS.save, OPS.transform, OPS.paintImageXObject, OPS.restore);
+      args.push(null, [117, 117, -16, 16, 40 + i * 80, 100 + i * 60], ['wm'], null);
+    }
+    // One genuine upright figure with its own id survives.
+    fn.push(OPS.save, OPS.transform, OPS.paintImageXObject, OPS.restore);
+    args.push(null, [300, 0, 0, 200, 100, 300], ['fig'], null);
+    const result = extractPdfGraphics({ fnArray: fn, argsArray: args }, OPS, [0, 0], 612, 792);
+    expect(result.images).toHaveLength(1);
+    expect(result.images[0]).toMatchObject({ x0: 100, x1: 400 });
+  });
+
+  it('never turns a full-page paper fill plus scattered shapes into a figure', () => {
+    const shapes = Array.from({ length: 8 }, (_, i) => ({
+      x0: 100 + i * 40,
+      y0: 600,
+      x1: 120 + i * 40,
+      y1: 610,
+    }));
+    const result = run([item('正文', 100, 700)], {
+      fills: [{ x0: 28, y0: 100, x1: 585, y1: 792 }],
+      shapes,
+    });
+    expect(result.blocks.some((b) => b.kind === 'figure')).toBe(false);
+  });
+
+  it('keeps code listing lines (code + trailing comment) out of tables', () => {
+    const code = (str: string, x: number, y: number, w: number): PdfTextItem => ({
+      str,
+      transform: [8.8, 0, 0, 8.8, x, y],
+      width: w,
+      height: 8.8,
+    });
+    const items: PdfTextItem[] = [];
+    for (let i = 0; i < 6; i++) {
+      items.push(code(`value_${i} = compute(${i})`, 105, 700 - i * 14, 120));
+      items.push(code(`# 第${i}步的说明`, 300, 700 - i * 14, 60));
+    }
+    const result = run(items, {
+      fills: [{ x0: 78, y0: 600, x1: 535, y1: 720 }],
+    });
+    expect(result.blocks.some((b) => b.kind === 'cell')).toBe(false);
+  });
+});

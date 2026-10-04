@@ -37,6 +37,8 @@ export interface LayoutResult {
   tables: TableModel[];
   figures: FigureRegion[];
   flowRuns: Run[];
+  /** Large shaded boxes (code listings, call-outs): their lines never form tables. */
+  codeBoxes: Rect[];
   /** Segments/rects consumed by tables, for diagnostics and tests. */
   consumedSegments: number;
 }
@@ -823,6 +825,10 @@ function detectFigures(
     const w = shape.x1 - shape.x0;
     const h = shape.y1 - shape.y0;
     if (Math.max(w, h) < 6 || insideTable(shape)) continue;
+    // A page-sized fill is the paper colour, not drawing content.
+    if (w * h >= pageArea * 0.6) continue;
+    // So is a full-width fill spanning a large share of the page height.
+    if (w >= pageWidth * 0.9 && h >= pageHeight * 0.2) continue;
     // Full-width bands are backgrounds / dividers, not drawing content.
     if (w > pageWidth * 0.85 && h < pageHeight * 0.12) continue;
     members.push(shape);
@@ -900,7 +906,13 @@ export function analyzeLayout(
   pageWidth: number,
   pageHeight: number,
 ): LayoutResult {
-  const result: LayoutResult = { tables: [], figures: [], flowRuns: runs, consumedSegments: 0 };
+  const result: LayoutResult = {
+    tables: [],
+    figures: [],
+    flowRuns: runs,
+    codeBoxes: [],
+    consumedSegments: 0,
+  };
   if (!graphics) return result;
   const upright = runs.filter((run) => !run.rotated);
   const bodySize = upright.length ? textSize(upright) : 10;
@@ -913,6 +925,14 @@ export function analyzeLayout(
     else if (seg.x0 === seg.x1)
       vRules.push({ pos: seg.x0, a: Math.min(seg.y0, seg.y1), b: Math.max(seg.y0, seg.y1) });
   }
+  // A wide shaded box that is not the paper colour is a code listing or call-out.
+  const pageArea = pageWidth * pageHeight;
+  result.codeBoxes = [...graphics.fills, ...graphics.shapes].filter((box) => {
+    const w = box.x1 - box.x0;
+    const h = box.y1 - box.y0;
+    // The paper colour spans (almost) the full page width; code boxes keep margins.
+    return w >= pageWidth * 0.4 && w <= pageWidth * 0.92 && h >= bodySize * 2.5 && w * h < pageArea;
+  });
   const consumed = new Set<Run>();
   const grids = detectGrids(hRules, vRules, upright);
   grids.consumedRuns.forEach((run) => consumed.add(run));
