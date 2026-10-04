@@ -16,7 +16,9 @@ const mocks = vi.hoisted(() => ({
   originalDoc: null as Document | null,
   notes: [] as import('@/types/book').BookNote[],
 }));
-vi.mock('@/context/EnvContext', () => ({ useEnv: () => ({ appService: { isMobile: true, isAndroidApp: true } }) }));
+vi.mock('@/context/EnvContext', () => ({
+  useEnv: () => ({ appService: { isMobile: true, isAndroidApp: true } }),
+}));
 vi.mock('@/utils/bridge', () => ({ setSelectionSuppressed: mocks.suppressMenu }));
 vi.mock('@/store/themeStore', () => ({
   useThemeStore: () => ({
@@ -132,6 +134,61 @@ describe('PDF reflow as the original reader content mode', () => {
       );
     } finally {
       eventDispatcher.off('footnote-selection', report);
+      window.getSelection()!.removeAllRanges();
+    }
+  });
+  it('withdraws the selection toolbar once the selection is cleared', async () => {
+    mocks.originalDoc = rangeFor('第一页正文。').startContainer.ownerDocument;
+    render(<PdfReflowDialog bookKey='pdf-1' onClose={vi.fn()} />);
+    const p = await screen.findByText('第一页正文。');
+    const range = document.createRange();
+    range.selectNodeContents(p);
+    window.getSelection()!.removeAllRanges();
+    window.getSelection()!.addRange(range);
+    const report = vi.fn();
+    eventDispatcher.on('footnote-selection', report);
+    try {
+      fireEvent(document, new Event('selectionchange'));
+      await waitFor(() => expect(report).toHaveBeenCalledTimes(1));
+      expect(report.mock.calls[0]![0].detail.range).toBeTruthy();
+      window.getSelection()!.removeAllRanges();
+      fireEvent(document, new Event('selectionchange'));
+      await waitFor(() => expect(report).toHaveBeenCalledTimes(2));
+      expect(report.mock.calls[1]![0].detail).toEqual({ key: 'pdf-1' });
+      // No further clears are reported for an already-empty selection.
+      fireEvent(document, new Event('selectionchange'));
+      await new Promise((r) => setTimeout(r, 250));
+      expect(report).toHaveBeenCalledTimes(2);
+    } finally {
+      eventDispatcher.off('footnote-selection', report);
+      window.getSelection()!.removeAllRanges();
+    }
+  });
+  it('a short tap away from the selected text deselects it and closes the toolbar', async () => {
+    mocks.originalDoc = rangeFor('第一页正文。').startContainer.ownerDocument;
+    render(<PdfReflowDialog bookKey='pdf-1' onClose={vi.fn()} />);
+    const p = await screen.findByText('第一页正文。');
+    const range = document.createRange();
+    range.selectNodeContents(p);
+    window.getSelection()!.removeAllRanges();
+    window.getSelection()!.addRange(range);
+    // jsdom has no layout: a selection rect far from the tap point.
+    range.getClientRects = () =>
+      [{ left: 0, right: 10, top: 0, bottom: 10, width: 10, height: 10 }] as unknown as DOMRectList;
+    vi.spyOn(window.getSelection()!, 'getRangeAt').mockReturnValue(range);
+    const report = vi.fn();
+    eventDispatcher.on('footnote-selection', report);
+    const article = p.closest('article')!;
+    try {
+      fireEvent.pointerDown(article, { clientX: 300, clientY: 300 });
+      fireEvent.pointerUp(article, { clientX: 300, clientY: 300 });
+      fireEvent.click(article, { clientX: 300, clientY: 300 });
+      expect(report).toHaveBeenCalledTimes(1);
+      expect(report.mock.calls[0]![0].detail).toEqual({ key: 'pdf-1' });
+      expect(window.getSelection()!.rangeCount).toBe(0);
+    } finally {
+      eventDispatcher.off('footnote-selection', report);
+      vi.restoreAllMocks();
       window.getSelection()!.removeAllRanges();
     }
   });

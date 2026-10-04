@@ -17,7 +17,7 @@ export default function ReadingAIFloatingButton({
       const frame = cell.getBoundingClientRect();
       let space = bottomInset + 24;
       for (const item of cell.querySelectorAll<HTMLElement>(
-        '.footer-bar[data-visible="true"], [data-reading-tts-player="visible"]',
+        '.footer-bar[data-visible="true"], .footer-bar[data-visible="true"] [data-state="open"], [data-reading-tts-player="visible"]',
       )) {
         const rect = item.getBoundingClientRect();
         if (rect.height && rect.width) space = Math.max(space, frame.bottom - rect.top + 16);
@@ -30,15 +30,19 @@ export default function ReadingAIFloatingButton({
       subtree: true,
       attributes: true,
       childList: true,
-      attributeFilter: ['class', 'style', 'data-visible', 'data-reading-tts-player'],
+      attributeFilter: ['class', 'style', 'data-visible', 'data-state', 'data-reading-tts-player'],
     });
     size.observe(cell);
+    // The footer's font/color/progress panels are absolute children that extend
+    // above the 64px bar; transitions change their rect without a DOM change.
+    cell.addEventListener('transitionend', measure);
     window.addEventListener('resize', measure);
     measure();
     return () => {
       observer.disconnect();
       size.disconnect();
       window.removeEventListener('resize', measure);
+      cell.removeEventListener('transitionend', measure);
     };
   }, [bookKey, bottomInset]);
   return (

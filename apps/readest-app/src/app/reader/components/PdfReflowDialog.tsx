@@ -307,20 +307,22 @@ const PdfReflowDialog = ({ bookKey, initialPage, onClose, onGoToLibrary }: Props
     const notifySelection = () => {
       const selected = window.getSelection();
       const article = scrollRef.current;
+      if (pointer.current?.down || !article || !result) return;
+      const visibleRange =
+        selected?.rangeCount && !selected.isCollapsed ? selected.getRangeAt(0) : null;
       if (
-        pointer.current?.down ||
-        !selected?.rangeCount ||
-        selected.isCollapsed ||
-        !article ||
-        !result
-      )
-        return;
-      const visibleRange = selected.getRangeAt(0);
-      if (
+        !visibleRange ||
         !article.contains(visibleRange.startContainer) ||
         !article.contains(visibleRange.endContainer)
-      )
+      ) {
+        // The selection is gone (tap elsewhere / cleared): withdraw the
+        // toolbar that was opened for it instead of leaving it stranded.
+        if (lastRange) {
+          lastRange = null;
+          void eventDispatcher.dispatch('footnote-selection', { key: bookKey });
+        }
         return;
+      }
       if (
         lastRange &&
         lastRange.startContainer === visibleRange.startContainer &&
@@ -504,7 +506,25 @@ const PdfReflowDialog = ({ bookKey, initialPage, onClose, onGoToLibrary }: Props
             (e.target as HTMLElement).closest('button, input, select, a, [data-reflow-annotation]')
           )
             return;
-          if (window.getSelection()?.toString()) return;
+          const selection = window.getSelection();
+          if (selection?.toString()) {
+            // A short tap away from the selected text deselects it and closes
+            // its toolbar; a tap on the selection itself leaves it alone.
+            if (p && !p.moved && Date.now() - p.time <= 450 && selection.rangeCount) {
+              const inside = Array.from(selection.getRangeAt(0).getClientRects()).some(
+                (r) =>
+                  e.clientX >= r.left - 8 &&
+                  e.clientX <= r.right + 8 &&
+                  e.clientY >= r.top - 8 &&
+                  e.clientY <= r.bottom + 8,
+              );
+              if (!inside) {
+                selection.removeAllRanges();
+                void eventDispatcher.dispatch('footnote-selection', { key: bookKey });
+              }
+            }
+            return;
+          }
           if (p && (p.moved || Date.now() - p.time > 450)) return;
           // Use the visible article's bounds, not the window: shared panels,
           // split views and landscape can change the reader's position/width.

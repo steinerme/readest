@@ -8,12 +8,16 @@ import { useTranslation } from '@/hooks/useTranslation';
 import { useCommandPalette } from './CommandPaletteProvider';
 import { CommandSearchResult, getCategoryLabel, CommandCategory } from '@/services/commandRegistry';
 import HighlightChars from './HighlightChars';
+import { useEnv } from '@/context/EnvContext';
+import { useDeviceControlStore } from '@/store/deviceStore';
+import { eventDispatcher } from '@/utils/event';
 
 const CommandPalette: React.FC = () => {
   const _ = useTranslation();
   const { isOpen, close, query, setQuery, results, groupedResults, recentItems, executeCommand } =
     useCommandPalette();
 
+  const { appService } = useEnv();
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -55,6 +59,28 @@ const CommandPalette: React.FC = () => {
       }
     }
   }, [isOpen]);
+
+  // Android Back: the palette is not a <Dialog>, so it has to claim the native
+  // back key itself. Otherwise the key falls through (nothing consumes it) and
+  // the palette stays open after the keyboard is dismissed.
+  const closeRef = useRef(close);
+  closeRef.current = close;
+  useEffect(() => {
+    if (!isOpen || !appService?.isAndroidApp) return;
+    const { acquireBackKeyInterception, releaseBackKeyInterception } =
+      useDeviceControlStore.getState();
+    const onNativeKey = (event: CustomEvent) => {
+      if (event.detail?.keyName !== 'Back') return false;
+      closeRef.current();
+      return true;
+    };
+    acquireBackKeyInterception();
+    eventDispatcher.onSync('native-key-down', onNativeKey);
+    return () => {
+      eventDispatcher.offSync('native-key-down', onNativeKey);
+      releaseBackKeyInterception();
+    };
+  }, [isOpen, appService?.isAndroidApp]);
 
   // scroll selected item into view
   useEffect(() => {
