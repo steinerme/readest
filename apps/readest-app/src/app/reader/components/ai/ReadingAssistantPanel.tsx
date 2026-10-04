@@ -9,10 +9,12 @@ import { usePdfReflowStore } from '@/store/pdfReflowStore';
 import { DEFAULT_AI_SETTINGS } from '@/services/ai/constants';
 import {
   READING_ACTIONS,
+  expandQueryTerms,
   streamReadingAnswer,
   type ReadingAction,
 } from '@/services/ai/readingAssistant';
 import {
+  RECAP_QUESTION,
   collectReadingContext,
   citedPassages,
   type ReadingContext,
@@ -27,6 +29,21 @@ import {
   speakReadingAnswer,
   warmReadingSpeech,
 } from '@/services/ai/readingSpeech';
+import {
+  appendHistory,
+  clearHistory,
+  deleteHistoryEntry,
+  loadHistory,
+  type HistoryEntry,
+} from '@/services/ai/readingHistory';
+import {
+  canSkipConfirmation,
+  consentKey,
+  hasConsent,
+  setConsent,
+} from '@/services/ai/readingConsent';
+import { goToCitation } from '@/services/ai/readingNavigation';
+import { bookHashOf, getOpenedResume } from '@/services/ai/readingResume';
 import { getPdfRendererPage } from '@/utils/pdfRendererPage';
 import { eventDispatcher } from '@/utils/event';
 import { uniqueId } from '@/utils/misc';
@@ -55,6 +72,8 @@ export default function ReadingAssistantPanel({ request, onClose }: Props) {
   const { bookKey } = request;
   const listening = request.mode === 'listening';
   const selection = request.mode === 'selection';
+  const recap = request.mode === 'recap';
+  const hash = bookHashOf(bookKey);
   const { envConfig } = useEnv();
   const settings = useSettingsStore((s) => s.settings);
   const ai = settings.aiSettings ?? DEFAULT_AI_SETTINGS;
@@ -63,10 +82,18 @@ export default function ReadingAssistantPanel({ request, onClose }: Props) {
   const bookDoc = data?.bookDoc;
   const view = useReaderStore.getState().getView(bookKey);
   const [scope, setScope] = useState<ReadingScope>(
-    selection ? 'selection' : listening ? 'listening' : 'current',
+    selection ? 'selection' : listening ? 'listening' : recap ? 'read' : 'current',
   );
   const [protect, setProtect] = useState(true);
-  const [question, setQuestion] = useState(selection || listening ? READING_ACTIONS.plain : '');
+  const [question, setQuestion] = useState(
+    selection || listening ? READING_ACTIONS.plain : recap ? RECAP_QUESTION : '',
+  );
+  const [expand, setExpand] = useState(true);
+  const [history, setHistory] = useState<HistoryEntry[]>(() => loadHistory(hash));
+  const [showHistory, setShowHistory] = useState(false);
+  const [skipConfirm, setSkipConfirm] = useState(false);
+  // A recap is only ever the "read" range; it never carries a free-form question.
+  const [recapMode, setRecapMode] = useState(recap);
   const [context, setContext] = useState<ReadingContext | null>(null);
   const [turns, setTurns] = useState<Turn[]>([]);
   const [answer, setAnswer] = useState('');
@@ -78,6 +105,7 @@ export default function ReadingAssistantPanel({ request, onClose }: Props) {
   const [autoResume, setAutoResume] = useState(true);
   const [saved, setSaved] = useState(false);
   const abort = useRef<AbortController | null>(null);
+  const pendingAutoSend = useRef(false);
   const operationLock = useRef(false);
   const savingLock = useRef(false);
   const active = useRef(true);
@@ -123,7 +151,19 @@ export default function ReadingAssistantPanel({ request, onClose }: Props) {
       pausedController.current = controller;
     } else if (controller.state.includes('paused')) pausedController.current = controller;
   };
-  const prepare = async () => {
+  const destinationNow = () => {
+    const endpoint =
+      ai.provider === 'codex'
+        ? 'https://chatgpt.com/backend-api/codex'
+        : ai.provider === 'openrouter'
+          ? ai.openrouterBaseUrl
+          : ai.provider === 'ollama'
+            ? ai.ollamaBaseUrl
+            : 'Vercel AI Gateway';
+    return safeDestination(endpoint ?? '');
+  };
+  const currentConsentKey = () => consentKey(hash, scope, protect, destinationNow());
+  const prepare = async (options: { autoSend?: boolean } = {}) => {
     if (operationLock.current || busy || !bookDoc || !view || !question.trim()) return;
     operationLock.current = true;
     const controller = new AbortController();
@@ -135,6 +175,15 @@ export default function ReadingAssistantPanel({ request, onClose }: Props) {
     setSaved(false);
     try {
       if (listening && pauseForAI) await ensurePaused();
+      // Question-only request for extra search words. Never includes book text,
+      // and any failure just means we search with the question's own words.
+      let extraTerms: string[] = [];
+      const retrieving = scope === 'current' || scope === 'read' || scope === 'all';
+      if (expand && ai.enabled && retrieving && !recapMode) {
+        setProgress('正在向云端扩展检索词…');
+        extraTerms = await expandQueryTerms({ settings: ai, question, signal: controller.signal });
+        setProgress('');
+      }
       const result = await collectReadingContext({
         bookDoc,
         view,
@@ -142,9 +191,12 @@ export default function ReadingAssistantPanel({ request, onClose }: Props) {
         sectionIndex: source.current.sectionIndex,
         question,
         isPdf: book?.format === 'PDF',
-        spoilerProtection: protect,
+        // A recap must never reveal text past the reader's position.
+        spoilerProtection: recapMode ? true : protect,
         boundaryCfi: source.current.boundaryCfi,
         seeds: scope === 'selection' ? (request.seed ? [request.seed] : []) : request.seeds,
+        recap: recapMode,
+        extraTerms,
         signal: controller.signal,
         onProgress: (current, total) => {
           if (active.current) setProgress(`${current} / ${total}`);
@@ -153,6 +205,7 @@ export default function ReadingAssistantPanel({ request, onClose }: Props) {
       if (!active.current || controller.signal.aborted) return;
       if (!result.passages.length) throw new Error('NO_READABLE_TEXT');
       setContext(result);
+      pendingAutoSend.current = !!options.autoSend && !!result.passages.length;
     } catch (e) {
       if (active.current && !controller.signal.aborted) setError(friendlyError(e));
     } finally {
@@ -162,6 +215,8 @@ export default function ReadingAssistantPanel({ request, onClose }: Props) {
   };
   const send = async () => {
     if (operationLock.current || busy || !context || !ai.enabled) return;
+    if (skipConfirm && canSkipConfirmation(scope)) setConsent(currentConsentKey(), true);
+    else setConsent(currentConsentKey(), false);
     operationLock.current = true;
     const controller = new AbortController();
     abort.current = controller;
@@ -185,9 +240,24 @@ export default function ReadingAssistantPanel({ request, onClose }: Props) {
       });
       if (!active.current || controller.signal.aborted) return;
       setTurns((old) => [
-        ...old.slice(-5),
+        ...old.slice(-19),
         { question, answer: response, context, scope, protect },
       ]);
+      setHistory(
+        appendHistory(hash, {
+          id: uniqueId(),
+          at: Date.now(),
+          question: recapMode ? '前情提要' : question,
+          answer: response,
+          scope,
+          citations: citedPassages(response, context.passages).map((p) => ({
+            id: p.id,
+            label: p.label,
+            cfi: p.cfi,
+            sectionIndex: p.sectionIndex,
+          })),
+        }),
+      );
     } catch (e) {
       if (active.current) {
         setAnswer('');
@@ -253,12 +323,9 @@ export default function ReadingAssistantPanel({ request, onClose }: Props) {
       savingLock.current = false;
     }
   };
-  const jump = async (passage: ReadingPassage) => {
+  const jump = async (passage: { cfi: string }) => {
     try {
-      const reflow = usePdfReflowStore.getState().sessions[bookKey];
-      if (reflow?.revealCitation) await reflow.revealCitation(passage.cfi);
-      else if (reflow) await reflow.navigate(passage.cfi);
-      else await view?.goTo(passage.cfi);
+      await goToCitation(bookKey, passage.cfi);
       close();
     } catch {
       setError('无法跳转到原文位置。');
@@ -302,24 +369,33 @@ export default function ReadingAssistantPanel({ request, onClose }: Props) {
     store.setRequestedPanel('AI');
     store.setSettingsDialogOpen(true);
   };
+  // With "don't ask again for this range" on, the preview is still built (and
+  // shown) but the request goes out without an extra tap.
+  useEffect(() => {
+    if (!context || !pendingAutoSend.current) return;
+    pendingAutoSend.current = false;
+    if (!hasConsent(currentConsentKey()) || !canSkipConfirmation(scope)) return;
+    void send();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [context]);
   const latest = turns.at(-1);
   const references =
     latest && answer === latest.answer ? citedPassages(answer, latest.context.passages) : [];
-  const endpoint =
-    ai.provider === 'codex'
-      ? 'https://chatgpt.com/backend-api/codex'
-      : ai.provider === 'openrouter'
-        ? ai.openrouterBaseUrl
-        : ai.provider === 'ollama'
-          ? ai.ollamaBaseUrl
-          : 'Vercel AI Gateway';
-  const destination = safeDestination(endpoint ?? '');
+  const destination = destinationNow();
   return (
     <ModalPortal showOverlay={false}>
       <Dialog
         isOpen={true}
         snapHeight={0.88}
-        title={listening ? 'AI 听书助手' : selection ? 'AI 解释选中文字' : '问这本书'}
+        title={
+          listening
+            ? 'AI 听书助手'
+            : selection
+              ? 'AI 解释选中文字'
+              : recapMode
+                ? '前情提要'
+                : '问这本书'
+        }
         onClose={close}
         boxClassName='max-w-2xl'
         contentClassName='px-4 pb-6'
@@ -336,13 +412,41 @@ export default function ReadingAssistantPanel({ request, onClose }: Props) {
               尚未启用 AI。请在 AI 设置中启用，并配置模型与 API。检索原文可以离线使用。
             </p>
           )}
+          {recapMode && (
+            <div className='rounded-xl bg-base-200 p-3'>
+              <p className='font-semibold'>基于你已读到的位置生成前情提要</p>
+              {getOpenedResume(bookKey) && (
+                <p className='mt-1 break-words text-base-content/70'>
+                  上次读到：{getOpenedResume(bookKey)!.label || '上次的位置'}
+                  {getOpenedResume(bookKey)!.page
+                    ? ` · 第 ${getOpenedResume(bookKey)!.page} 页`
+                    : ''}
+                </p>
+              )}
+              <p className='mt-1 text-xs text-base-content/60'>
+                只使用已读部分，不含后文；取最近几段加早先内容的均匀抽样，不是通读全文。
+              </p>
+              <button
+                type='button'
+                className='btn btn-ghost btn-xs mt-2'
+                disabled={!!busy}
+                onClick={() => {
+                  setRecapMode(false);
+                  setQuestion('');
+                  invalidate();
+                }}
+              >
+                改为自己提问
+              </button>
+            </div>
+          )}
           <label className='flex items-center gap-2'>
             内容范围
             <select
               aria-label='内容范围'
               className='select select-sm min-w-0 flex-1'
               value={scope}
-              disabled={!!busy}
+              disabled={!!busy || recapMode}
               onChange={(e) => {
                 setScope(e.target.value as ReadingScope);
                 invalidate();
@@ -357,7 +461,7 @@ export default function ReadingAssistantPanel({ request, onClose }: Props) {
               <option value='all'>全书本地检索（可能剧透）</option>
             </select>
           </label>
-          {scope !== 'selection' && scope !== 'listening' && scope !== 'all' && (
+          {!recapMode && scope !== 'selection' && scope !== 'listening' && scope !== 'all' && (
             <label className='flex items-center gap-2'>
               <input
                 type='checkbox'
@@ -427,22 +531,40 @@ export default function ReadingAssistantPanel({ request, onClose }: Props) {
                 ))}
             </div>
           )}
-          <textarea
-            aria-label='向阅读助手提问'
-            className='textarea w-full min-h-24'
-            maxLength={2000}
-            value={question}
-            disabled={!!busy}
-            placeholder='例如：作者为什么得出这个结论？这和前文有什么关系？'
-            onChange={(e) => changeQuestion(e.target.value)}
-          />
+          {!recapMode && (
+            <textarea
+              aria-label='向阅读助手提问'
+              className='textarea w-full min-h-24'
+              maxLength={2000}
+              value={question}
+              disabled={!!busy}
+              placeholder='例如：作者为什么得出这个结论？这和前文有什么关系？'
+              onChange={(e) => changeQuestion(e.target.value)}
+            />
+          )}
+          {!recapMode && (scope === 'current' || scope === 'read' || scope === 'all') && (
+            <label className='flex items-start gap-2 text-xs'>
+              <input
+                type='checkbox'
+                checked={expand}
+                disabled={!!busy}
+                onChange={(e) => {
+                  setExpand(e.target.checked);
+                  invalidate();
+                }}
+              />
+              <span>
+                检索前让云端模型为问题补充同义词（只发送你的问题，不发送书中文字；失败会自动退回本地检索）
+              </span>
+            </label>
+          )}
           <div className='flex flex-wrap gap-2'>
             <button
               className='btn btn-primary btn-sm'
               disabled={!!busy || !question.trim()}
-              onClick={() => void prepare()}
+              onClick={() => void prepare({ autoSend: true })}
             >
-              {busy === 'prepare' ? `正在本地检索 ${progress}` : '准备原文 · 本地检索'}
+              {busy === 'prepare' ? `正在检索 ${progress}` : '准备原文 · 本地检索'}
             </button>
             {busy && (
               <button className='btn btn-outline btn-sm' onClick={() => abort.current?.abort()}>
@@ -492,6 +614,22 @@ export default function ReadingAssistantPanel({ request, onClose }: Props) {
                   ))}
                 </div>
               </details>
+              {canSkipConfirmation(scope) && (
+                <label className='mb-2 flex items-start gap-2 text-xs'>
+                  <input
+                    type='checkbox'
+                    checked={skipConfirm || hasConsent(currentConsentKey())}
+                    disabled={!!busy}
+                    onChange={(e) => {
+                      setSkipConfirm(e.target.checked);
+                      if (!e.target.checked) setConsent(currentConsentKey(), false);
+                    }}
+                  />
+                  <span>
+                    本次阅读中，这本书同一范围、同一服务不再逐次确认（仍会显示发送内容；重启应用后恢复确认）
+                  </span>
+                </label>
+              )}
               <button
                 className='btn btn-primary btn-sm'
                 disabled={!!busy || !ai.enabled}
@@ -571,6 +709,63 @@ export default function ReadingAssistantPanel({ request, onClose }: Props) {
               )}
             </section>
           )}
+          {history.length > 0 && (
+            <section aria-label='本书助手历史' className='rounded-xl border border-base-300 p-3'>
+              <button
+                type='button'
+                className='flex w-full items-center justify-between font-semibold'
+                aria-expanded={showHistory}
+                onClick={() => setShowHistory((v) => !v)}
+              >
+                <span>本书的助手历史（{history.length} 条，仅存于本机）</span>
+                <span aria-hidden='true'>{showHistory ? '收起' : '展开'}</span>
+              </button>
+              {showHistory && (
+                <div className='mt-3 space-y-3'>
+                  {[...history].reverse().map((entry) => (
+                    <div key={entry.id} className='rounded-xl bg-base-200 p-3'>
+                      <p className='text-xs text-base-content/60'>
+                        {new Date(entry.at).toLocaleString()}
+                      </p>
+                      <p className='mt-1 font-semibold break-words'>{entry.question}</p>
+                      <p className='mt-1 whitespace-pre-wrap break-words select-text'>
+                        {entry.answer}
+                      </p>
+                      <div className='mt-2 flex flex-wrap gap-2'>
+                        {entry.citations.map((c) => (
+                          <button
+                            key={c.id}
+                            type='button'
+                            className='btn btn-outline btn-xs'
+                            onClick={() => void jump(c)}
+                          >
+                            [{c.id}] {c.label} · 回到原文
+                          </button>
+                        ))}
+                        <button
+                          type='button'
+                          className='btn btn-ghost btn-xs text-error'
+                          onClick={() => setHistory(deleteHistoryEntry(hash, entry.id))}
+                        >
+                          删除这条
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                  <button
+                    type='button'
+                    className='btn btn-ghost btn-sm text-error'
+                    onClick={() => {
+                      clearHistory(hash);
+                      setHistory([]);
+                    }}
+                  >
+                    清空本书历史
+                  </button>
+                </div>
+              )}
+            </section>
+          )}
           {turns.length > 1 && (
             <details>
               <summary className='cursor-pointer'>
@@ -585,8 +780,7 @@ export default function ReadingAssistantPanel({ request, onClose }: Props) {
             </details>
           )}
           <p className='text-xs text-base-content/60'>
-            关闭助手会取消请求和解释语音，不会擅自恢复播放。未保存的对话只存在本次面板中。扫描页、图片和复杂公式不做
-            OCR。
+            关闭助手会取消请求和解释语音，不会擅自恢复播放。问答会保存在本机的“本书助手历史”中，不同步、不上传，可随时删除；请求和解释语音仍会在关闭时取消。
           </p>
         </div>
       </Dialog>
@@ -616,10 +810,18 @@ function friendlyError(error: unknown): string {
   return '操作失败。请检查 API 地址、密钥、模型或网络；没有自动重试。';
 }
 
+// Follow-ups are limited by size, not by a fixed number of rounds: as many of the
+// most recent same-range turns as fit in this budget go back with the next question.
+export const FOLLOWUP_CHAR_BUDGET = 6000;
 function followupHistory(turns: Turn[], scope: ReadingScope, protect: boolean) {
   const recent: Turn[] = [];
+  let used = 0;
   for (const turn of [...turns].reverse()) {
-    if (turn.scope !== scope || turn.protect !== protect || recent.length >= 2) break;
+    if (turn.scope !== scope || turn.protect !== protect) break;
+    const size = Math.min(turn.question.length, 2000) + Math.min(turn.answer.length, 3000);
+    if (recent.length && used + size > FOLLOWUP_CHAR_BUDGET) break;
+    if (!recent.length && size > FOLLOWUP_CHAR_BUDGET) break;
+    used += size;
     recent.unshift(turn);
   }
   return recent.flatMap((turn) => [

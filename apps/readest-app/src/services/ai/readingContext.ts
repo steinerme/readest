@@ -24,6 +24,10 @@ export interface ContextOptions {
   spoilerProtection: boolean;
   boundaryCfi?: string;
   seeds?: ReadingSeed[];
+  /** "Previously on…" recap: nearest passages plus an even sample of earlier ones. */
+  recap?: boolean;
+  /** Extra search words (e.g. synonyms a cloud model suggested from the question alone). */
+  extraTerms?: string[];
   signal: AbortSignal;
   onProgress?: (current: number, total: number) => void;
 }
@@ -36,6 +40,29 @@ export interface ReadingContext {
 export const CONTEXT_CHAR_LIMIT = 14000;
 const CHUNK_SIZE = 1000;
 const MAX_SECTIONS = 2000;
+export const RECAP_RECENT = 6;
+export const RECAP_SAMPLED = 8;
+export const RECAP_QUESTION =
+  '请写一份“前情提要”：先用两三句话说清这本书/这部分讲了什么，再按先后顺序列出到目前为止的要点（人物、事件或论点），最近读到的内容写得更细。只依据提供的原文，不推测后文。';
+
+/**
+ * Picks the passages for a recap from everything read so far (document order).
+ * The newest few are what the reader needs most; the rest is an even sample so
+ * the earlier arc is still represented. Pure, so it can be tested directly.
+ */
+export function pickRecapPassages<T>(all: T[]): T[] {
+  const limit = RECAP_RECENT + RECAP_SAMPLED;
+  if (all.length <= limit) return [...all];
+  const recent = all.slice(-RECAP_RECENT);
+  const earlier = all.slice(0, all.length - RECAP_RECENT);
+  const picked = new Set<number>();
+  for (let i = 0; i < RECAP_SAMPLED; i++) {
+    picked.add(
+      Math.min(earlier.length - 1, Math.floor(((i + 0.5) * earlier.length) / RECAP_SAMPLED)),
+    );
+  }
+  return [...[...picked].sort((a, b) => a - b).map((i) => earlier[i]!), ...recent];
+}
 
 export function throwIfCancelled(signal: AbortSignal) {
   if (signal.aborted) throw new DOMException('Cancelled', 'AbortError');
@@ -58,6 +85,83 @@ export function scorePassage(text: string, question: string): number {
     const count = lower.split(term).length - 1;
     return score + (count > 0 ? 1 + Math.log1p(count) : 0);
   }, 0);
+}
+
+/** Search words suggested by a model, cleaned to short plain terms. */
+export function normalizeExtraTerms(terms: readonly string[] | undefined): string[] {
+  const out: string[] = [];
+  for (const raw of terms ?? []) {
+    if (typeof raw !== 'string') continue;
+    const term = raw.trim().toLowerCase().replace(/\s+/g, ' ');
+    if (term.length < 2 || term.length > 12) continue;
+    if (!/[\p{L}\p{N}]/u.test(term)) continue;
+    out.push(term);
+  }
+  return [...new Set(out)].slice(0, 16);
+}
+export function searchTerms(question: string, extra?: readonly string[]): string[] {
+  return [...new Set([...queryTerms(question), ...normalizeExtraTerms(extra)])].slice(0, 100);
+}
+
+const BM25_K1 = 1.5;
+const BM25_B = 0.75;
+const HIT_LIMIT = 8;
+const PASSAGE_LIMIT = 14;
+interface Candidate {
+  passage: ReadingPassage;
+  pos: number;
+  len: number;
+  tf: number[];
+  prev?: ReadingPassage;
+  next?: ReadingPassage;
+}
+export function termFrequencies(text: string, terms: readonly string[]): number[] {
+  const lower = text.toLowerCase();
+  return terms.map((term) => lower.split(term).length - 1);
+}
+/** Okapi BM25 over the passages scanned in this request (idf from this scan only). */
+export function bm25(
+  candidates: { tf: number[]; len: number }[],
+  scanned: { count: number; length: number },
+): number[] {
+  const n = Math.max(1, scanned.count);
+  const avg = Math.max(1, scanned.length / n);
+  const termCount = candidates[0]?.tf.length ?? 0;
+  const idf: number[] = [];
+  for (let t = 0; t < termCount; t++) {
+    const df = candidates.reduce((c, item) => c + (item.tf[t]! > 0 ? 1 : 0), 0);
+    idf.push(Math.log(1 + (n - df + 0.5) / (df + 0.5)));
+  }
+  return candidates.map((item) =>
+    item.tf.reduce((sum, tf, t) => {
+      if (!tf) return sum;
+      const norm = tf + BM25_K1 * (1 - BM25_B + (BM25_B * item.len) / avg);
+      return sum + (idf[t]! * tf * (BM25_K1 + 1)) / norm;
+    }, 0),
+  );
+}
+const positionOf = (passage: ReadingPassage) => Number(/p(\d+)$/.exec(passage.id)?.[1] ?? 0);
+/** Best hits first, then the paragraphs just before/after each hit, in reading order. */
+export function assemblePassages(
+  ranked: { candidate: Candidate; score: number }[],
+): ReadingPassage[] {
+  const hits = ranked.filter((r) => r.score > 0).slice(0, HIT_LIMIT);
+  const chosen = new Map<string, ReadingPassage>();
+  let chars = 0;
+  const add = (passage: ReadingPassage | undefined) => {
+    if (!passage || chosen.has(passage.id)) return;
+    if (chosen.size >= PASSAGE_LIMIT || chars + passage.text.length > CONTEXT_CHAR_LIMIT) return;
+    chosen.set(passage.id, passage);
+    chars += passage.text.length;
+  };
+  for (const hit of hits) add(hit.candidate.passage);
+  for (const hit of hits) {
+    add(hit.candidate.prev);
+    add(hit.candidate.next);
+  }
+  return [...chosen.values()].sort(
+    (a, b) => a.sectionIndex - b.sectionIndex || positionOf(a) - positionOf(b),
+  );
 }
 
 function flattenTOC(items: TOCItem[]): TOCItem[] {
@@ -227,7 +331,13 @@ export async function collectReadingContext(options: ContextOptions): Promise<Re
     warnings.push('当前分节无法确定已读位置，已排除该分节。');
   if (end - start + 1 > MAX_SECTIONS) throw new Error('书籍分节超过 2000，请缩小到当前章节。');
   const total = Math.max(0, end - start + 1);
-  let pool: (ReadingPassage & { score: number })[] = [];
+  const terms = searchTerms(question, options.extraTerms);
+  const candidates: Candidate[] = [];
+  // When nothing matches, fall back to the paragraphs nearest the reader.
+  let nearby: ReadingPassage[] = [];
+  const recapPool: ReadingPassage[] = [];
+  const recap = !!options.recap && scope === 'read';
+  const scan = { count: 0, length: 0 };
   let scanned = 0;
   for (let sectionIndex = start; sectionIndex <= end; sectionIndex++) {
     throwIfCancelled(signal);
@@ -243,12 +353,28 @@ export async function collectReadingContext(options: ContextOptions): Promise<Re
         isPdf ? `物理页 ${sectionIndex + 1}` : `分节 ${sectionIndex + 1}`,
         protect && sectionIndex === index ? options.boundaryCfi : undefined,
       );
-      pool.push(...passages.map((p) => ({ ...p, score: scorePassage(p.text, question) })));
-      pool.sort(
-        (a, b) =>
-          b.score - a.score || Math.abs(a.sectionIndex - index) - Math.abs(b.sectionIndex - index),
-      );
-      pool = pool.slice(0, 14);
+      if (recap) {
+        recapPool.push(...passages);
+        thinRecapPool(recapPool);
+      } else {
+        passages.forEach((passage, i) => {
+          scan.count++;
+          scan.length += passage.text.length;
+          const tf = termFrequencies(passage.text, terms);
+          if (tf.some((count) => count > 0))
+            candidates.push({
+              passage,
+              pos: positionOf(passage),
+              len: passage.text.length,
+              tf,
+              prev: passages[i - 1],
+              next: passages[i + 1],
+            });
+        });
+        nearby = [...nearby, ...passages]
+          .sort((a, b) => Math.abs(a.sectionIndex - index) - Math.abs(b.sectionIndex - index))
+          .slice(0, PASSAGE_LIMIT);
+      }
     } catch {
       warnings.push(`分节 / 物理页 ${sectionIndex + 1} 文本或锚点不可用，已跳过。`);
     }
@@ -258,10 +384,40 @@ export async function collectReadingContext(options: ContextOptions): Promise<Re
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
   }
   throwIfCancelled(signal);
-  if ((scope === 'read' || scope === 'all') && !pool.some((p) => p.score > 0)) {
-    warnings.push('未找到关键词匹配，以下仅为当前位置附近片段，不能代表全书检索结论。');
+  if (recap) {
+    const chosen = pickRecapPassages(recapPool);
+    if (recapPool.length > chosen.length)
+      warnings.push(
+        `前情提要依据最近 ${RECAP_RECENT} 段和此前内容的均匀抽样（共 ${recapPool.length} 段中取 ${chosen.length} 段），不是通读全文，早期细节可能缺失。`,
+      );
+    return { passages: chosen, scanned, total, warnings };
   }
-  return { passages: pool.map(({ score: _score, ...p }) => p), scanned, total, warnings };
+  const scores = bm25(candidates, scan);
+  const ranked = candidates
+    .map((candidate, i) => ({ candidate, score: scores[i]! }))
+    .sort(
+      (a, b) =>
+        b.score - a.score ||
+        Math.abs(a.candidate.passage.sectionIndex - index) -
+          Math.abs(b.candidate.passage.sectionIndex - index),
+    );
+  const passages = assemblePassages(ranked);
+  if (!passages.length) {
+    if (scope === 'read' || scope === 'all')
+      warnings.push('未找到关键词匹配，以下仅为当前位置附近片段，不能代表全书检索结论。');
+    return { passages: nearby, scanned, total, warnings };
+  }
+  return { passages, scanned, total, warnings };
+}
+
+/** Keep a recap candidate pool bounded for very large books (newest stay intact). */
+export function thinRecapPool(pool: ReadingPassage[], max = 12000) {
+  while (pool.length > max) {
+    const keepTail = pool.splice(-RECAP_RECENT);
+    const older = pool.filter((_, i) => i % 2 === 0);
+    pool.length = 0;
+    pool.push(...older, ...keepTail);
+  }
 }
 
 export function citedPassages(answer: string, passages: ReadingPassage[]): ReadingPassage[] {

@@ -19,7 +19,8 @@ import BooknotesNav from './sidebar/BooknotesNav';
 import FoliateViewer from './FoliateViewer';
 import SectionInfo from './SectionInfo';
 import HeaderBar from './HeaderBar';
-import ReadingAIFloatingButton from './ai/ReadingAIFloatingButton';
+import ReadingFloatingDock from './ai/ReadingFloatingDock';
+import ReadingResumeCard from './ai/ReadingResumeCard';
 import PageNavigationButtons from './PageNavigationButtons';
 import FooterBar from './footerbar/FooterBar';
 import ProgressBar from './ProgressBar';
@@ -162,7 +163,8 @@ const BookCellInner: React.FC<BookCellProps> = ({
         appServiceHasRoundedWindow && 'rounded-window',
       )}
     >
-      <ReadingAIFloatingButton bookKey={bookKey} bottomInset={gridInsets.bottom} />
+      <ReadingFloatingDock bookKey={bookKey} bottomInset={gridInsets.bottom} />
+      <ReadingResumeCard bookKey={bookKey} topInset={gridInsets.top} />
       <HeaderBar
         bookKey={bookKey}
         gridInsets={gridInsets}

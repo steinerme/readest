@@ -8,7 +8,7 @@ import { useReaderStore } from '@/store/readerStore';
 
 export interface ReadingAssistantRequest {
   bookKey: string;
-  mode?: 'selection' | 'book' | 'listening';
+  mode?: 'selection' | 'book' | 'listening' | 'recap';
   seed?: ReadingSeed;
 }
 
