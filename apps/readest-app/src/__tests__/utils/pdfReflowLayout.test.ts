@@ -309,4 +309,28 @@ describe('page watermarks, paper fills and code listings', () => {
     });
     expect(result.blocks.some((b) => b.kind === 'cell')).toBe(false);
   });
+
+  it('does not treat a tall page-background fill with side margins as a code box', () => {
+    // Some books paint the page as one 28..585 x 0..792 rectangle (91% wide).
+    // Every text line sits inside it; none of them is code, so a paragraph that
+    // wraps over several lines must stay one block.
+    const lines = Array.from({ length: 5 }, (_, i) =>
+      item('这是一段普通正文会在页面里折成很多行', 72, 700 - i * 15, 9.2),
+    );
+    // 612x792 page: the fill is 91% wide, just under the 92% paper cut-off.
+    const result = reflowPdfText(lines, 612, 792, true, {
+      ...empty,
+      fills: [{ x0: 28, y0: 0, x1: 585, y1: 792 }],
+    });
+    expect(result.blocks).toHaveLength(1);
+    expect(result.blocks[0]!.kind).toBe('paragraph');
+  });
+
+  it('still treats a short shaded band as a code box', () => {
+    const lines = Array.from({ length: 3 }, (_, i) =>
+      item('code_line_that_is_long_enough_to_fill', 90, 700 - i * 15, 9),
+    );
+    const result = run(lines, { fills: [{ x0: 78, y0: 640, x1: 535, y1: 720 }] });
+    expect(result.blocks).toHaveLength(3);
+  });
 });

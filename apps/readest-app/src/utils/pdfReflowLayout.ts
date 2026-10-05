@@ -947,7 +947,17 @@ export function analyzeLayout(
     const w = box.x1 - box.x0;
     const h = box.y1 - box.y0;
     // The paper colour spans (almost) the full page width; code boxes keep margins.
-    return w >= pageWidth * 0.4 && w <= pageWidth * 0.92 && h >= bodySize * 2.5 && w * h < pageArea;
+    // Some books paint the page background as one tall rectangle that keeps a
+    // narrow margin (e.g. 28pt each side, 91% wide) — it covers the whole text
+    // body, so it is paper, never a code listing. A real listing is a short band.
+    const wholeBody = h >= pageHeight * 0.6 && w >= pageWidth * 0.8;
+    return (
+      w >= pageWidth * 0.4 &&
+      w <= pageWidth * 0.92 &&
+      h >= bodySize * 2.5 &&
+      w * h < pageArea &&
+      !wholeBody
+    );
   });
   const consumed = new Set<Run>();
   const grids = detectGrids(hRules, vRules, upright);
