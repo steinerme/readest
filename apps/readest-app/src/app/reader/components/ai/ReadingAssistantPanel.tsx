@@ -89,7 +89,7 @@ export default function ReadingAssistantPanel({ request, onClose }: Props) {
   const [question, setQuestion] = useState(
     selection || listening ? READING_ACTIONS.plain : recap ? RECAP_QUESTION : '',
   );
-  const [expand, setExpand] = useState(true);
+  const [expand, setExpand] = useState(false);
   const [history, setHistory] = useState<HistoryEntry[]>(() => loadHistory(hash));
   const [showHistory, setShowHistory] = useState(false);
   const [skipConfirm, setSkipConfirm] = useState(false);

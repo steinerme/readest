@@ -366,10 +366,14 @@ describe('reading assistant shared panel', () => {
   });
 
   const bookRequest = { bookKey: 'hash-view', mode: 'book' as const, seeds: [] };
-  it('asks the cloud for extra search words from the question alone, then searches with them', async () => {
+  it('asks the cloud for extra search words only after you opt in, from the question alone', async () => {
     m.expand.mockResolvedValue(['汽车']);
     render(<ReadingAssistantPanel request={bookRequest} onClose={m.close} />);
     fireEvent.change(screen.getByLabelText('向阅读助手提问'), { target: { value: '轿车' } });
+    expect(
+      (screen.getByLabelText(/检索前让云端模型为问题补充同义词/) as HTMLInputElement).checked,
+    ).toBe(false);
+    fireEvent.click(screen.getByLabelText(/检索前让云端模型为问题补充同义词/));
     await prepare();
     expect(m.expand).toHaveBeenCalledTimes(1);
     expect(m.expand.mock.calls[0]![0].question).toBe('轿车');
@@ -381,10 +385,9 @@ describe('reading assistant shared panel', () => {
     expect(m.collect.mock.calls[0]![0].extraTerms).toEqual(['汽车']);
     expect(m.answer).not.toHaveBeenCalled();
   });
-  it('lets you turn the extra-words step off, and never uses it for selections', async () => {
+  it('never sends the question for extra words by default, nor for selections', async () => {
     render(<ReadingAssistantPanel request={bookRequest} onClose={m.close} />);
     fireEvent.change(screen.getByLabelText('向阅读助手提问'), { target: { value: '轿车' } });
-    fireEvent.click(screen.getByLabelText(/检索前让云端模型为问题补充同义词/));
     await prepare();
     expect(m.expand).not.toHaveBeenCalled();
     cleanup();
