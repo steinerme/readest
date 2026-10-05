@@ -67,6 +67,7 @@ import { useTransferStore } from '@/store/transferStore';
 import { useBackgroundTexture } from '@/hooks/useBackgroundTexture';
 import { getLibraryViewSettings } from '@/helpers/settings';
 import { useAppUrlIngress } from '@/hooks/useAppUrlIngress';
+import { useDebugSelectionLinks } from '@/hooks/useDebugSelectionLinks';
 import { useOpenWithBooks } from '@/hooks/useOpenWithBooks';
 import { useOpenLaunchLinks } from '@/hooks/useOpenLaunchLinks';
 import { useBookshelfWidget } from '@/hooks/useBookshelfWidget';
@@ -373,6 +374,7 @@ const LibraryPageContent = ({ searchParams }: { searchParams: ReadonlyURLSearchP
   ]);
 
   useAppUrlIngress();
+  useDebugSelectionLinks();
   useOpenWithBooks();
   useOpenLaunchLinks();
   useBookshelfWidget();
