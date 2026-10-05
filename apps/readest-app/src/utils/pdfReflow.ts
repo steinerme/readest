@@ -119,7 +119,6 @@ function tableEntries(
   return entries;
 }
 
-
 const textLength = (runs: Run[]) => runs.reduce((n, run) => n + run.text.trim().length, 0);
 
 /**
@@ -153,6 +152,43 @@ export function startsListItem(line: string, previous: string | undefined): bool
   if (!NUMBER_MARK.test(text) || previous === undefined) return false;
   const before = previous.trimEnd();
   return SENTENCE_END.test(before) || BULLET_MARK.test(before) || NUMBER_MARK.test(before);
+}
+
+/**
+ * Some books draw list bullets as tiny vector discs instead of text glyphs. A
+ * line starts a list item when a small, roughly square shape sits just left of
+ * its first character and level with its first row. Shapes inside tables or
+ * figures never reach here (their runs are consumed), and a dot must be well
+ * smaller than the text, so rules, boxes and diagram nodes do not qualify.
+ */
+function vectorBulletLines(lines: Line[], graphics: PdfGraphics | undefined, bodySize: number) {
+  const found = new Set<Line>();
+  if (!graphics?.shapes.length) return found;
+  const dots = graphics.shapes.filter((shape) => {
+    const w = shape.x1 - shape.x0;
+    const h = shape.y1 - shape.y0;
+    return (
+      w >= 1.5 &&
+      h >= 1.5 &&
+      w <= bodySize * 0.8 &&
+      h <= bodySize * 0.8 &&
+      Math.abs(w - h) <= Math.max(w, h) * 0.35
+    );
+  });
+  for (const line of lines) {
+    const hit = dots.some((dot) => {
+      const gap = line.x - dot.x1;
+      const mid = (dot.y0 + dot.y1) / 2;
+      return (
+        gap >= -1 &&
+        gap <= line.size * 2.5 &&
+        mid >= line.y - line.size * 0.15 &&
+        mid <= line.y + line.size * 0.95
+      );
+    });
+    if (hit) found.add(line);
+  }
+  return found;
 }
 
 /**
@@ -313,6 +349,7 @@ export function reflowPdfText(
       .filter((gap) => gap > bodySize * 0.6 && gap < bodySize * 2.1);
     const leading = median(gaps) || bodySize * 1.3;
     const leftMargin = Math.min(...kept.map((line) => line.x));
+    const dotLines = vectorBulletLines(kept, graphics, bodySize);
     let previous: Line | undefined;
     let current: Entry | undefined;
     for (const line of kept) {
@@ -344,6 +381,7 @@ export function reflowPdfText(
         codeLines.has(line) ||
         (!!previous && codeLines.has(previous)) ||
         startsListItem(line.text, previous?.text) ||
+        dotLines.has(line) ||
         rotated ||
         separated
       ) {
