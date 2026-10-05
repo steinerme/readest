@@ -34,17 +34,25 @@ export async function resumeReading(bookKey: string, expected?: object): Promise
 export function readingController(bookKey: string) {
   return asTTSController(ttsSessionManager.getSessionByHash(bookKey.split('-')[0]!)?.controller);
 }
+export interface ReadingSpeechProgress {
+  phase: 'synthesizing' | 'playing';
+  /** 1-based index of the current chunk. */
+  chunk: number;
+  total: number;
+}
 export async function speakReadingAnswer(options: {
   text: string;
   signal: AbortSignal;
   rate?: number;
+  onProgress?: (progress: ReadingSpeechProgress) => void;
 }): Promise<void> {
   const player = getExplanationPlayer();
   const text = options.text.replace(/\[s\d+(?:p\d+|seed\d+)\]/g, '').replace(/[*#`]/g, '');
   const chunks = text.match(/[\s\S]{1,500}/g) ?? [];
   const edge = new EdgeSpeechTTS('wss');
-  for (const chunk of chunks) {
+  for (const [i, chunk] of chunks.entries()) {
     if (options.signal.aborted) throw new DOMException('Cancelled', 'AbortError');
+    options.onProgress?.({ phase: 'synthesizing', chunk: i + 1, total: chunks.length });
     // This synthesis uses its own AudioContext, never the book's client or
     // shared context. No engine shutdown / voice reset touches the book.
     const { data } = await abortableSynthesis(
@@ -76,6 +84,7 @@ export async function speakReadingAnswer(options: {
         }
       });
       options.signal.addEventListener('abort', stop, { once: true });
+      options.onProgress?.({ phase: 'playing', chunk: i + 1, total: chunks.length });
       player.scheduleChunk(generation, buffer, { trimStartSec: 0, mediaScale: 1, gapSec: 0 });
       player.endSession(generation);
     });

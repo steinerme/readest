@@ -248,6 +248,63 @@ describe('reading assistant shared panel', () => {
     expect(m.speech).toHaveBeenCalledTimes(1);
     expect(m.pause).toHaveBeenCalledTimes(1);
   });
+  it('shows what the explanation voice is doing and a stop button next to the answer', async () => {
+    let finish: () => void = () => {};
+    let signal: AbortSignal | null = null;
+    m.speech.mockImplementation((o) => {
+      signal = o.signal;
+      o.onProgress?.({ phase: 'synthesizing', chunk: 1, total: 2 });
+      return new Promise<void>((resolve) => {
+        finish = () => {
+          o.onProgress?.({ phase: 'playing', chunk: 2, total: 2 });
+          resolve();
+        };
+      });
+    });
+    render(<ReadingAssistantPanel request={request} onClose={m.close} />);
+    await send();
+    fireEvent.click(screen.getByText(/允许将本条 AI 回答/));
+    fireEvent.click(screen.getByText('朗读解释，然后继续原文'));
+    const status = await screen.findByLabelText('解释朗读状态');
+    expect(status.getAttribute('role')).toBe('status');
+    await waitFor(() => expect(status.textContent).toContain('正在生成解释语音（第 1/2 段）'));
+    expect(screen.getByText('停止解释朗读')).toBeTruthy();
+    finish();
+    await screen.findByText('解释已读完，已继续原文。');
+    expect(screen.queryByLabelText('解释朗读状态')).toBeNull();
+    expect(signal!.aborted).toBe(false);
+  });
+  it('stopping the explanation says so and leaves the original paused', async () => {
+    let signal: AbortSignal | null = null;
+    m.speech.mockImplementation(
+      (o) =>
+        new Promise<void>((_, reject) => {
+          signal = o.signal;
+          o.onProgress?.({ phase: 'playing', chunk: 1, total: 1 });
+          o.signal.addEventListener('abort', () =>
+            reject(new DOMException('Cancelled', 'AbortError')),
+          );
+        }),
+    );
+    render(<ReadingAssistantPanel request={request} onClose={m.close} />);
+    await send();
+    fireEvent.click(screen.getByText(/允许将本条 AI 回答/));
+    fireEvent.click(screen.getByText('朗读解释，然后继续原文'));
+    await screen.findByText('正在朗读解释');
+    fireEvent.click(screen.getByText('停止解释朗读'));
+    await screen.findByText('已停止解释朗读，原文保持暂停。');
+    expect(signal!.aborted).toBe(true);
+    expect(m.resume).not.toHaveBeenCalled();
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+  it('reports when the original player changed and was not resumed', async () => {
+    m.resume.mockResolvedValue(false);
+    render(<ReadingAssistantPanel request={request} onClose={m.close} />);
+    await send();
+    fireEvent.click(screen.getByText(/允许将本条 AI 回答/));
+    fireEvent.click(screen.getByText('朗读解释，然后继续原文'));
+    await screen.findByText('解释已读完。原文播放器已变化，没有自动继续。');
+  });
   it('leaves original paused if explanation speech fails', async () => {
     m.speech.mockRejectedValue(new Error('VOICE_FAILED'));
     render(<ReadingAssistantPanel request={request} onClose={m.close} />);

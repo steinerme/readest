@@ -28,6 +28,7 @@ import {
   readingController,
   speakReadingAnswer,
   warmReadingSpeech,
+  type ReadingSpeechProgress,
 } from '@/services/ai/readingSpeech';
 import {
   appendHistory,
@@ -104,6 +105,9 @@ export default function ReadingAssistantPanel({ request, onClose }: Props) {
   const [voiceConsent, setVoiceConsent] = useState(false);
   const [autoResume, setAutoResume] = useState(true);
   const [saved, setSaved] = useState(false);
+  // What the explanation voice is doing right now, shown next to the answer.
+  const [speech, setSpeech] = useState<ReadingSpeechProgress | null>(null);
+  const [speechOutcome, setSpeechOutcome] = useState('');
   const abort = useRef<AbortController | null>(null);
   const pendingAutoSend = useRef(false);
   const operationLock = useRef(false);
@@ -339,27 +343,55 @@ export default function ReadingAssistantPanel({ request, onClose }: Props) {
     abort.current = controller;
     setBusy('speech');
     setError('');
+    setSpeechOutcome('');
+    setSpeech({ phase: 'synthesizing', chunk: 1, total: 1 });
+    let resumed = false;
+    let interrupted = false;
     try {
       await ensurePaused();
       if (!active.current || controller.signal.aborted) return;
       const original = pausedController.current;
       const playback = (event: CustomEvent) => {
-        if (event.detail?.state === 'playing') controller.abort();
+        if (event.detail?.state === 'playing') {
+          interrupted = true;
+          controller.abort();
+        }
       };
       eventDispatcher.on('tts-playback-state', playback);
       try {
-        await speakReadingAnswer({ text: answer, signal: controller.signal });
+        await speakReadingAnswer({
+          text: answer,
+          signal: controller.signal,
+          onProgress: (p) => {
+            if (active.current && !controller.signal.aborted) setSpeech(p);
+          },
+        });
       } finally {
         eventDispatcher.off('tts-playback-state', playback);
       }
       if (active.current && !controller.signal.aborted && autoResume && original) {
-        await resumeReading(bookKey, original);
+        resumed = await resumeReading(bookKey, original);
       }
+      if (active.current && !controller.signal.aborted)
+        setSpeechOutcome(
+          resumed
+            ? '解释已读完，已继续原文。'
+            : autoResume && original
+              ? '解释已读完。原文播放器已变化，没有自动继续。'
+              : '解释已读完。',
+        );
     } catch (e) {
       if (active.current && !controller.signal.aborted) setError(friendlyError(e));
     } finally {
       operationLock.current = false;
-      if (active.current) setBusy(null);
+      if (active.current) {
+        setBusy(null);
+        setSpeech(null);
+        if (controller.signal.aborted)
+          setSpeechOutcome(
+            interrupted ? '原文已开始播放，解释朗读已停止。' : '已停止解释朗读，原文保持暂停。',
+          );
+      }
     }
   };
   const openSettings = () => {
@@ -705,7 +737,26 @@ export default function ReadingAssistantPanel({ request, onClose }: Props) {
                   >
                     朗读解释{autoResume ? '，然后继续原文' : ''}
                   </button>
+                  {speechOutcome && (
+                    <p role='status' className='text-sm text-base-content/70'>
+                      {speechOutcome}
+                    </p>
+                  )}
                 </>
+              )}
+              {busy === 'speech' && (
+                <div
+                  role='status'
+                  aria-live='polite'
+                  aria-label='解释朗读状态'
+                  className='flex items-center gap-3 rounded-lg bg-base-200 p-2'
+                >
+                  <span className='loading loading-bars loading-sm' aria-hidden='true' />
+                  <span className='flex-1 text-sm'>{speechLabel(speech)}</span>
+                  <button className='btn btn-outline btn-sm' onClick={() => abort.current?.abort()}>
+                    停止解释朗读
+                  </button>
+                </div>
               )}
             </section>
           )}
@@ -795,6 +846,12 @@ function safeDestination(endpoint: string): string {
   } catch {
     return endpoint === 'Vercel AI Gateway' ? endpoint : '请检查 AI 设置';
   }
+}
+/** Plain-language state of the explanation voice. */
+export function speechLabel(p: ReadingSpeechProgress | null): string {
+  if (!p) return '正在准备解释语音…';
+  const part = p.total > 1 ? `（第 ${p.chunk}/${p.total} 段）` : '';
+  return p.phase === 'playing' ? `正在朗读解释${part}` : `正在生成解释语音${part}…`;
 }
 function friendlyError(error: unknown): string {
   const message = error instanceof Error ? error.message : '';
