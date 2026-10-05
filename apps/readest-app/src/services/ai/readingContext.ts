@@ -69,13 +69,120 @@ export function throwIfCancelled(signal: AbortSignal) {
 }
 
 // Retrieval stays on-device. No embedding endpoint or cloud index is involved.
+// Passages are never segmented: each term is counted as a substring, so a
+// word-level query term still matches inside unsegmented book text.
+
+/** Question words that say nothing about the book's content. */
+const CJK_STOP_WORDS = new Set(
+  (
+    '什么 为什么 怎么 怎样 如何 哪些 哪个 哪里 是否 是不是 有没有 能否 可以 可能 ' +
+    '这个 那个 这些 那些 这样 那样 一个 一些 一下 我们 你们 他们 她们 它们 自己 ' +
+    '作者 本书 这本书 书中 书里 文中 文章 这段 这里 那里 意思 解释 说明 请问 告诉 ' +
+    '为何 以及 还是 或者 但是 因为 所以 如果 就是 不是 没有 已经 还有 关于 应该 ' +
+    '那么 这么 多么 怎么样 的话 一样 比较 非常 特别 有些'
+  ).split(' '),
+);
+const CJK_STOP_CHARS = new Set(
+  '的了和是在有也就都而及与或吗呢吧啊么这那我你他她它们个把被让给对从向得地着过比很更最太讲说段'.split(
+    '',
+  ),
+);
+/** 讲的 / 快得 → 讲 / 快: a trailing particle never helps matching. */
+const trimParticle = (word: string) => (word.length > 1 ? word.replace(/[的得地了]+$/, '') : word);
+const CJK_RUN = /[\u3400-\u9fff]+/g;
+
+type WordSegmenter = {
+  segment: (text: string) => Iterable<{ segment: string; isWordLike?: boolean }>;
+};
+let cachedSegmenter: WordSegmenter | null | undefined;
+/** Intl word segmenter for Chinese, or null when the runtime lacks one (or
+ * ships without CJK dictionary data and returns whole runs unsplit). */
+export function chineseSegmenter(): WordSegmenter | null {
+  if (cachedSegmenter !== undefined) return cachedSegmenter;
+  cachedSegmenter = null;
+  try {
+    const Ctor = (Intl as unknown as { Segmenter?: new (l: string, o: object) => WordSegmenter })
+      .Segmenter;
+    if (Ctor) {
+      const segmenter = new Ctor('zh', { granularity: 'word' });
+      // Small-ICU builds return the whole run as one "word": treat as absent.
+      if ([...segmenter.segment('冰块融化')].length > 1) cachedSegmenter = segmenter;
+    }
+  } catch {
+    cachedSegmenter = null;
+  }
+  return cachedSegmenter;
+}
+/** Test hook: forget the probed segmenter. */
+export function resetChineseSegmenter(value?: WordSegmenter | null) {
+  cachedSegmenter = value;
+}
+
+function bigrams(run: string, out: string[]) {
+  if (run.length === 1) {
+    if (!CJK_STOP_CHARS.has(run)) out.push(run);
+    return;
+  }
+  for (let i = 0; i < run.length - 1; i++) out.push(run.slice(i, i + 2));
+}
+
+/** Words of one CJK run. Dictionary segmentation splits some compounds
+ * (表面积 → 表|面积), so adjacent short pieces are also joined back. */
+function chineseWords(run: string, segmenter: WordSegmenter, out: string[]) {
+  const pieces: string[][] = [[]];
+  for (const { segment: raw } of segmenter.segment(run)) {
+    const segment = trimParticle(raw);
+    if (
+      !segment ||
+      CJK_STOP_WORDS.has(segment) ||
+      (segment.length === 1 && CJK_STOP_CHARS.has(segment))
+    ) {
+      if (pieces[pieces.length - 1]!.length) pieces.push([]);
+      continue;
+    }
+    pieces[pieces.length - 1]!.push(segment);
+    // A particle was trimmed off: the phrase ends here.
+    if (segment !== raw) pieces.push([]);
+  }
+  const found: string[] = [];
+  for (const raw of pieces) {
+    // Names the dictionary doesn't know come out one character at a time
+    // (芒|格): glue runs of single characters back into one word.
+    const group: string[] = [];
+    let gluing = false; // the last entry was built only from single characters
+    for (const word of raw) {
+      if (word.length === 1 && gluing && group[group.length - 1]!.length < 4) {
+        group[group.length - 1] += word;
+      } else {
+        group.push(word);
+        gluing = word.length === 1;
+      }
+    }
+    group.forEach((word, i) => {
+      if (word.length >= 2) found.push(word);
+      const next = group[i + 1];
+      // Re-join compounds the dictionary split (表|面积) and two-word
+      // phrases (复利|效应); never glue two loose single characters.
+      if (next && word.length + next.length <= 4 && word.length + next.length >= 3)
+        found.push(word + next);
+    });
+    // A lone content character (e.g. 冰) is still a usable term.
+    if (group.length === 1 && group[0]!.length === 1) found.push(group[0]!);
+  }
+  // Nothing survived (all stop words or single characters): keep the old
+  // bigram behaviour instead of an empty query.
+  if (found.length) out.push(...found);
+  else bigrams(run, out);
+}
+
 export function queryTerms(query: string): string[] {
   const latin = query.toLowerCase().match(/[a-z0-9]{2,}/g) ?? [];
-  const chinese = query.match(/[\u3400-\u9fff]+/g) ?? [];
+  const chinese = query.match(CJK_RUN) ?? [];
   const terms = [...latin];
-  for (const word of chinese) {
-    if (word.length === 1) terms.push(word);
-    else for (let i = 0; i < word.length - 1; i++) terms.push(word.slice(i, i + 2));
+  const segmenter = chineseSegmenter();
+  for (const run of chinese) {
+    if (segmenter) chineseWords(run, segmenter, terms);
+    else bigrams(run, terms);
   }
   return [...new Set(terms)].slice(0, 80);
 }

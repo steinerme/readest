@@ -5,6 +5,7 @@ import {
   chapterBounds,
   citedPassages,
   queryTerms,
+  resetChineseSegmenter,
   scorePassage,
   readingPrompt,
   CONTEXT_CHAR_LIMIT,
@@ -55,7 +56,10 @@ const signal = () => new AbortController().signal;
 
 describe('reading context: local bounded evidence', () => {
   it('tokenizes Chinese bigrams and English without cloud calls', () => {
+    // Bigram path: runtimes without a CJK-capable Intl.Segmenter.
+    resetChineseSegmenter(null);
     expect(queryTerms('知识判断 knowledge')).toEqual(['knowledge', '知识', '识判', '判断']);
+    resetChineseSegmenter(undefined);
     expect(scorePassage('knowledge knowledge and 判断', 'knowledge 判断')).toBeGreaterThan(0);
     expect(scorePassage('nothing', 'knowledge')).toBe(0);
   });
