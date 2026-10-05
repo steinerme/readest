@@ -7,6 +7,7 @@ import { isTauriAppPlatform } from '@/services/environment';
 import { eventDispatcher } from '@/utils/event';
 import { isGoogleOAuthRedirectUrl } from '@/services/sync/providers/gdrive/auth/reverseDnsRedirect';
 import { isOneDriveOAuthRedirectUrl } from '@/services/sync/providers/onedrive/microsoftOAuthConfig';
+import { DEBUG_SCHEME, debugLinksEnabled } from '@/utils/debugSelection';
 
 interface SingleInstancePayload {
   args: string[];
@@ -79,8 +80,17 @@ export function useAppUrlIngress() {
       // captures them via its own single-instance / onOpenUrl listeners, and
       // they must never reach a consumer (the book-import path would otherwise
       // mistake the reverse-DNS redirect URL for a file to open).
+      // Preview test links never reach a book/file consumer.
+      const debugUrls = urls.filter((url) => url.startsWith(DEBUG_SCHEME));
+      if (debugUrls.length) {
+        if (debugLinksEnabled())
+          eventDispatcher.dispatch('debug-selection-url', { urls: debugUrls });
+      }
       const appUrls = urls.filter(
-        (url) => !isGoogleOAuthRedirectUrl(url) && !isOneDriveOAuthRedirectUrl(url),
+        (url) =>
+          !url.startsWith(DEBUG_SCHEME) &&
+          !isGoogleOAuthRedirectUrl(url) &&
+          !isOneDriveOAuthRedirectUrl(url),
       );
       if (!appUrls.length) return;
       console.log('App incoming URL:', appUrls, 'action:', action);

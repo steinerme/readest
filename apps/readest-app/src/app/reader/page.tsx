@@ -9,6 +9,7 @@ import { useOpenLaunchLinks } from '@/hooks/useOpenLaunchLinks';
 import { useBookshelfWidget } from '@/hooks/useBookshelfWidget';
 import { useOpenShareLink } from '@/hooks/useOpenShareLink';
 import { useClipUrlIngress } from '@/hooks/useClipUrlIngress';
+import { useDebugSelectionLinks } from '@/hooks/useDebugSelectionLinks';
 import { useRestoreLibraryOnRelaunch } from '@/hooks/useRestoreLibraryOnRelaunch';
 import { useSettingsStore } from '@/store/settingsStore';
 import { checkForAppUpdates, checkAppReleaseNotes } from '@/helpers/updater';
@@ -28,6 +29,7 @@ export default function Page() {
   useBookshelfWidget();
   useOpenShareLink();
   useClipUrlIngress();
+  useDebugSelectionLinks();
   useRestoreLibraryOnRelaunch();
 
   useEffect(() => {
