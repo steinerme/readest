@@ -547,11 +547,22 @@ function detectRuleTables(
 
 /* ------------------------- rule-less aligned tables ---------------------- */
 
+/** Code with trailing comments ("x = 1   # why") lines up like a two-column
+ * table. When most rows end in a comment, it is source code, not a table. */
+const COMMENT_START = /^(?:#|\/\/|\/\*|<!--)/u;
+function looksLikeCommentedCode(rows: Segment[][]): boolean {
+  const commented = rows.filter((row) => {
+    const last = row[row.length - 1];
+    return row.length >= 2 && !!last && COMMENT_START.test(last.text);
+  }).length;
+  return commented >= 2 && commented >= rows.length * 0.6;
+}
+
 function detectAlignedTables(
   lines: Line[],
   pageWidth: number,
-): { tables: TableModel[]; used: Set<Line> } {
-  const out = { tables: [] as TableModel[], used: new Set<Line>() };
+): { tables: TableModel[]; used: Set<Line>; code: Set<Line> } {
+  const out = { tables: [] as TableModel[], used: new Set<Line>(), code: new Set<Line>() };
   const flat = lines.filter((line) => !line.runs.some((run) => run.rotated));
   if (flat.length < 3) return out;
   const size = median(flat.map((l) => l.size)) || 10;
@@ -567,6 +578,11 @@ function detectAlignedTables(
   const flush = () => {
     if (group.length >= 3) {
       const rows = group.map((line) => segments.get(line)!);
+      if (looksLikeCommentedCode(rows)) {
+        for (const line of group) out.code.add(line);
+        group = [];
+        return;
+      }
       const fit = inferColumns(rows, 0.6);
       const cellTexts = rows.flat().map((s) => s.text);
       const shortish =

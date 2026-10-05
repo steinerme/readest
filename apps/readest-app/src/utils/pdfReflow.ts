@@ -119,6 +119,42 @@ function tableEntries(
   return entries;
 }
 
+
+const textLength = (runs: Run[]) => runs.reduce((n, run) => n + run.text.trim().length, 0);
+
+/**
+ * A short piece of text tilted off the page axes is a watermark ("DRAFT",
+ * "SAMPLE COPY"), not reading content. It is removed only when the page also
+ * has far more upright text, so a page that is mostly diagonal text (a scanned
+ * or rotated page) keeps everything. Vertical sidebars are not diagonal.
+ */
+function dropDiagonalWatermark(runs: Run[], warn: (code: string) => void) {
+  const diagonal = runs.filter((run) => run.diagonal);
+  if (!diagonal.length) return;
+  const upright = textLength(runs.filter((run) => !run.rotated));
+  const stamped = textLength(diagonal);
+  if (stamped > 80 || upright < stamped * 4) return;
+  for (let i = runs.length - 1; i >= 0; i--) if (runs[i]!.diagonal) runs.splice(i, 1);
+  warn('watermark-text-dropped');
+}
+
+const BULLET_MARK = /^(?:[•·●○▪◦‣∙■□◆◇▶▸➢➤*]|[-–—]\s)\s*\S/u;
+const NUMBER_MARK = /^(?:\d{1,2}[.)]\s|[（(]\d{1,2}[）)]\s*|\d{1,2}[、．]\s*)\S/u;
+const SENTENCE_END = /[.。;；:：!?！？)）]$/u;
+
+/**
+ * A new list item starts a new block. Bullets always do; numbered markers only
+ * after a finished sentence or another item, so a wrapped line that happens to
+ * begin with "2020) " or "3. " inside a sentence is not split.
+ */
+export function startsListItem(line: string, previous: string | undefined): boolean {
+  const text = line.trimStart();
+  if (BULLET_MARK.test(text)) return true;
+  if (!NUMBER_MARK.test(text) || previous === undefined) return false;
+  const before = previous.trimEnd();
+  return SENTENCE_END.test(before) || BULLET_MARK.test(before) || NUMBER_MARK.test(before);
+}
+
 /**
  * Conservative, dependency-free reflow for horizontal pages.
  * Coordinates are unmodified PDF coordinates (larger baseline y is higher).
@@ -175,6 +211,8 @@ export function reflowPdfText(
     }
     const rotated = Math.abs(Math.atan2(b!, a!)) > 0.12 || item.dir === 'ttb';
     if (rotated) warn('rotated-text');
+    const angle = Math.abs((Math.atan2(b!, a!) * 180) / Math.PI) % 90;
+    const diagonal = rotated && item.dir !== 'ttb' && Math.min(angle, 90 - angle) > 3;
     allRuns.push({
       text,
       source,
@@ -183,8 +221,10 @@ export function reflowPdfText(
       size,
       width: Math.abs(item.width),
       rotated,
+      diagonal,
     });
   }
+  dropDiagonalWatermark(allRuns, warn);
 
   const layout = analyzeLayout(allRuns, graphics, pageWidth, pageHeight);
   const runs = layout.flowRuns;
@@ -236,6 +276,7 @@ export function reflowPdfText(
       ...tableEntries(table, layout.tables.length + sparse.tables.length + i, pageWidth, nextOrder),
     );
   });
+  for (const line of aligned.code) codeLines.add(line);
   if (aligned.used.size) lines = lines.filter((line) => !aligned.used.has(line));
   const wideGapRows = lines.filter((line) => line.wideGap).length;
   const columns = wideGapRows >= 2;
@@ -302,6 +343,7 @@ export function reflowPdfText(
         columns ||
         codeLines.has(line) ||
         (!!previous && codeLines.has(previous)) ||
+        startsListItem(line.text, previous?.text) ||
         rotated ||
         separated
       ) {

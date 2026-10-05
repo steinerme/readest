@@ -158,10 +158,10 @@ describe('PDF reflow golden pages', () => {
   // passing, vitest reports it, and it should become a normal `it`.
   describe('known reflow defects (expected to fail until fixed)', () => {
     const blocks = async (name: string) => (await reflow(GOLDEN_PDFS[name]!)).blocks;
-    it.fails('an unshaded code listing (code + trailing comment) is not a table', async () => {
+    it('an unshaded code listing (code + trailing comment) is not a table', async () => {
       expect((await blocks('code-listing')).some((b) => b.kind === 'cell')).toBe(false);
     });
-    it.fails('list items stay separate blocks instead of one run-on paragraph', async () => {
+    it('list items stay separate blocks instead of one run-on paragraph', async () => {
       const list = (await blocks('bullets')).filter((b) => b.text.includes('•'));
       expect(list.length).toBeGreaterThanOrEqual(3);
     });
@@ -169,7 +169,7 @@ describe('PDF reflow golden pages', () => {
       const first = (await blocks('two-column'))[0]!.text;
       expect(first).toContain('A mouse can fall from a building');
     });
-    it.fails('a rotated text watermark is dropped from the reading flow', async () => {
+    it('a rotated text watermark is dropped from the reading flow', async () => {
       expect(
         (await blocks('tilted-text-watermark')).some((b) => b.text.includes('SAMPLE COPY')),
       ).toBe(false);

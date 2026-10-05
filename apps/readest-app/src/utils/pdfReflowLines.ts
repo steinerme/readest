@@ -9,6 +9,8 @@ export type Run = {
   size: number;
   width: number;
   rotated: boolean;
+  /** Set only for text tilted off the 0/90/180/270 axes (typical watermark). */
+  diagonal?: boolean;
 };
 
 export type Line = {
