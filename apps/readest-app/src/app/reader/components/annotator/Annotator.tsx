@@ -2460,11 +2460,14 @@ const Annotator: React.FC<{ bookKey: string; contentInsets: Insets }> = ({
     }
   };
 
-  const toolButtons = toolbarToolTypes
-    .map(buildToolButton)
-    .filter((button): button is NonNullable<typeof button> => button !== null);
+  const toolButtons: Array<NonNullable<ReturnType<typeof buildToolButton>> & { id?: string }> =
+    toolbarToolTypes.flatMap((type) => {
+      const button = buildToolButton(type);
+      return button ? [{ ...button, id: `selection-tool-${type}` }] : [];
+    });
   if (selection?.text) {
     toolButtons.unshift({
+      id: 'selection-tool-ai',
       tooltipText: 'AI 解释',
       Icon: RiSparklingLine,
       onClick: () => {

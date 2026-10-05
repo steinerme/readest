@@ -25,6 +25,7 @@ interface AnnotationPopupProps {
     onClick: () => void;
     disabled?: boolean;
     visible?: boolean;
+    id?: string;
   }>;
   notes: BookNote[];
   /**
@@ -124,6 +125,7 @@ const AnnotationPopup: React.FC<AnnotationPopupProps> = ({
               return (
                 <AnnotationToolButton
                   key={index}
+                  id={button.id}
                   showTooltip={!highlightOptionsVisible}
                   tooltipText={button.tooltipText}
                   Icon={button.Icon}

@@ -916,6 +916,9 @@ const Bookshelf: React.FC<BookshelfProps> = ({
           onClick={(event) => handleImportBooks(event.currentTarget)}
         >
           <PiPlus aria-hidden className='text-base-content/60 size-10' />
+          {/* An aria-label on a popup button is not exposed to Android
+              accessibility services; text content is. */}
+          <span className='sr-only'>{_('Import Books')}</span>
         </button>
       </div>
     ) : undefined;

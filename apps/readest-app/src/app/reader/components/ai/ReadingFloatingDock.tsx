@@ -111,6 +111,7 @@ export default function ReadingFloatingDock({
     >
       <button
         type='button'
+        id='reading-dock-listen'
         aria-label={listenLabel}
         title={listenLabel}
         className={`reading-listen-floating ${buttonClass}`}
@@ -121,6 +122,7 @@ export default function ReadingFloatingDock({
       </button>
       <button
         type='button'
+        id='reading-dock-ai'
         aria-label='问这本书'
         title='问 AI'
         className={`reading-ai-floating ${buttonClass}`}

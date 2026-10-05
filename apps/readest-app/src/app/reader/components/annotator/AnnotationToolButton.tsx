@@ -7,6 +7,9 @@ interface AnnotationToolButtonProps {
   disabled?: boolean;
   Icon: React.ElementType;
   onClick: () => void;
+  /** Stable DOM id. Android WebView exposes it as the node's resource id,
+   * so UI automation can target the button without screen coordinates. */
+  id?: string;
 }
 
 const AnnotationToolButton: React.FC<AnnotationToolButtonProps> = ({
@@ -15,6 +18,7 @@ const AnnotationToolButton: React.FC<AnnotationToolButtonProps> = ({
   disabled,
   Icon,
   onClick,
+  id,
 }) => {
   const [buttonClicked, setButtonClicked] = useState(false);
   const handleClick = () => {
@@ -27,6 +31,7 @@ const AnnotationToolButton: React.FC<AnnotationToolButtonProps> = ({
       title={!buttonClicked && showTooltip ? tooltipText : undefined}
     >
       <button
+        id={id}
         onClick={handleClick}
         aria-label={tooltipText}
         className={clsx(

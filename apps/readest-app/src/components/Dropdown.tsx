@@ -180,6 +180,11 @@ const Dropdown: React.FC<DropdownProps> = ({
           onKeyDown={handleKeyDown}
         >
           {toggleButton}
+          {/* Android's WebView does not surface aria-label of a popup button
+              as its text or content description, so accessibility services
+              saw these icon-only toggles as unnamed. Text content does reach
+              the node's text. */}
+          <span className='sr-only'>{label}</span>
         </button>
         <details
           ref={detailsRef}
