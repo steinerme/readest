@@ -799,6 +799,84 @@ const mergeOverlapping = (rects: Array<Rect & { vector: boolean }>, pad: number)
   return items;
 };
 
+/**
+ * Display equations are often drawn as vector glyph outlines, so no text can
+ * be extracted. Cluster small glyph-sized shapes into horizontal bands; a band
+ * with several glyphs, no text on the same line and a modest height is an
+ * equation on its own line and is kept as a picture. Inline formulas share a
+ * line with text and are deliberately left alone. Bigger drawings (charts,
+ * diagrams) are handled by the vector figure detector.
+ */
+function displayFormulaBands(
+  shapes: Rect[],
+  runs: Run[],
+  insideTable: (rect: Rect) => boolean,
+  pageWidth: number,
+  bodySize: number,
+): Rect[] {
+  const glyphs = shapes.filter((shape) => {
+    const w = shape.x1 - shape.x0;
+    const h = shape.y1 - shape.y0;
+    return Math.max(w, h) >= 1.5 && w <= bodySize * 4 && h <= bodySize * 3 && !insideTable(shape);
+  });
+  if (glyphs.length < 3) return [];
+  const sorted = [...glyphs].sort((a, b) => b.y1 - a.y1);
+  const bands: Array<Rect & { count: number }> = [];
+  for (const glyph of sorted) {
+    const band = bands.find((b) => glyph.y0 <= b.y1 + 4 && glyph.y1 >= b.y0 - 4);
+    if (band) {
+      band.x0 = Math.min(band.x0, glyph.x0);
+      band.y0 = Math.min(band.y0, glyph.y0);
+      band.x1 = Math.max(band.x1, glyph.x1);
+      band.y1 = Math.max(band.y1, glyph.y1);
+      band.count += 1;
+    } else bands.push({ ...glyph, count: 1 });
+  }
+  return bands.filter((band) => {
+    const w = band.x1 - band.x0;
+    const h = band.y1 - band.y0;
+    // Glyphs of one equation sit close together; scattered marks are not text.
+    if (w / band.count > bodySize * 2.2) return false;
+    if (band.count < 4 || w < bodySize * 3 || w > pageWidth * 0.95) return false;
+    if (h < bodySize * 0.6 || h > bodySize * 8) return false;
+    // Any text on the same line makes it an inline formula (or table, caption).
+    return !runs.some((run) => {
+      const y = run.y + run.size * 0.3;
+      return y >= band.y0 - 1 && y <= band.y1 + 1;
+    });
+  });
+}
+
+/**
+ * Fraction numerators and denominators are real text sitting just above and
+ * below the drawn glyph band. They are short, centred on the band and close to
+ * it, and belong to the equation picture. Sentences stay in the text flow.
+ */
+function formulaFractionRuns(band: Rect, runs: Run[], bodySize: number): Run[] {
+  const mid = (band.x0 + band.x1) / 2;
+  const rows = new Map<number, Run[]>();
+  for (const run of runs) {
+    const key = Math.round(run.y / 2);
+    rows.set(key, [...(rows.get(key) ?? []), run]);
+  }
+  const out: Run[] = [];
+  for (const row of rows.values()) {
+    const { y } = runCenter(row[0]!);
+    const gap = y > band.y1 ? y - band.y1 : y < band.y0 ? band.y0 - y : 0;
+    // Immediately above/below the glyph band, not a line away.
+    if (gap === 0 || gap > bodySize * 1.4) continue;
+    const left = Math.min(...row.map((run) => run.x));
+    const right = Math.max(...row.map((run) => run.x + run.width));
+    const chars = row.reduce((n, run) => n + run.text.trim().length, 0);
+    // A fraction part is one short line centred on the equation; prose spans
+    // the column or starts at the left margin.
+    if (chars > 28 || right - left > (band.x1 - band.x0) * 1.2 + 20) continue;
+    if (Math.abs((left + right) / 2 - mid) > Math.max(30, (band.x1 - band.x0) * 0.4)) continue;
+    out.push(...row);
+  }
+  return out;
+}
+
 function detectFigures(
   graphics: PdfGraphics,
   tables: Rect[],
@@ -896,6 +974,25 @@ function detectFigures(
       if ((chars / (w * h)) * 1000 >= 5) continue;
       candidates.push({ ...box, vector: true });
     }
+  }
+
+  // Equations on their own line become pictures, but never join or overlap a
+  // real drawing: that one keeps its own text-suppression rule. Stacked
+  // fraction parts are included and their text is dropped from the flow.
+  for (const band of displayFormulaBands(graphics.shapes, runs, insideTable, pageWidth, bodySize)) {
+    if (candidates.some((c) => touches(c, band, 4))) continue;
+    const parts = formulaFractionRuns(band, runs, bodySize);
+    let rect: Rect = band;
+    for (const run of parts) {
+      const { y } = runCenter(run);
+      rect = unionRect(rect, {
+        x0: run.x,
+        x1: run.x + run.width,
+        y0: y - run.size * 0.5,
+        y1: y + run.size * 0.9,
+      });
+    }
+    candidates.push({ ...rect, vector: parts.length > 0 });
   }
 
   const merged = mergeOverlapping(candidates, 3);

@@ -334,3 +334,45 @@ describe('page watermarks, paper fills and code listings', () => {
     expect(result.blocks).toHaveLength(3);
   });
 });
+
+describe('display equations drawn as vector glyphs', () => {
+  // A row of small glyph outlines (an equation) with no text on its line.
+  const glyphs = (y: number, count = 8) =>
+    Array.from({ length: count }, (_, i) => ({
+      x0: 200 + i * 12,
+      y0: y,
+      x1: 208 + i * 12,
+      y1: y + 10,
+    }));
+  const base = [item('The identity is:', 72, 700), item('and then we continue here.', 72, 600)];
+
+  it('keeps an equation alone on its line as a figure block', () => {
+    const page = run(base, { shapes: glyphs(650) });
+    expect(page.blocks.map((b) => b.kind)).toEqual(['paragraph', 'figure', 'paragraph']);
+    const figure = page.blocks[1]!.figure!;
+    expect(figure.y0).toBeLessThan(650);
+    expect(figure.y1).toBeGreaterThan(660);
+  });
+  it('leaves glyph-like shapes on a text line alone (inline formulas)', () => {
+    const page = run([item('inline formula here', 190, 652, 12), ...base], { shapes: glyphs(650) });
+    expect(page.blocks.every((b) => b.kind !== 'figure')).toBe(true);
+  });
+  it('needs several glyphs, so a lone bullet or rule dot is not a formula', () => {
+    const page = run(base, { shapes: glyphs(650, 2) });
+    expect(page.blocks.every((b) => b.kind !== 'figure')).toBe(true);
+  });
+  it('folds a short centred numerator and denominator into the picture', () => {
+    const items = [...base, item('numerator', 235, 664, 12), item('denominator', 232, 636, 12)];
+    const page = run(items, { shapes: glyphs(650) });
+    expect(page.blocks.map((b) => b.kind)).toEqual(['paragraph', 'figure', 'paragraph']);
+    expect(page.blocks.some((b) => b.text.includes('numerator'))).toBe(false);
+  });
+  it('does not swallow a body sentence just below the equation', () => {
+    const items = [
+      ...base,
+      item('A long following sentence that runs across the whole text column.', 72, 636, 12),
+    ];
+    const page = run(items, { shapes: glyphs(650) });
+    expect(page.blocks.some((b) => b.text.includes('following sentence'))).toBe(true);
+  });
+});
