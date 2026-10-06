@@ -88,44 +88,102 @@ export function findInlineEquations(
       line.size <= bodySize * 1.15 &&
       line.runs.every((run) => !run.rotated),
   );
+  interface Found {
+    cluster: Rect;
+    line: Line;
+    tiny: boolean;
+    gap: number;
+    accepted: boolean;
+  }
+  const found: Found[] = [];
   for (const cluster of clusterGlyphs(glyphs, bodySize)) {
     const w = cluster.x1 - cluster.x0;
     const h = cluster.y1 - cluster.y0;
-    // Text-height symbols only: a bullet dot or rule fragment is far smaller,
-    // a drawing far larger.
     // A single letter ("i", "c") is only ~0.5 em tall; anything smaller is a
     // bullet dot, accent or rule fragment. Tiny marks must sit right against
-    // the words to count.
+    // the words (or another equation part) to count.
     const tiny = Math.max(w, h) < bodySize * 0.55;
-    if (Math.max(w, h) < bodySize * 0.3 || w > bodySize * 12 || h > bodySize * 3.2) continue;
-    let best: { line: Line; distance: number } | undefined;
+    // Text-height symbols only: a bullet dot or rule fragment is far smaller,
+    // a drawing far larger.
+    if (Math.max(w, h) < bodySize * 0.3 || w > bodySize * 24 || h > bodySize * 3.2) continue;
+    let best: { line: Line; gap: number } | undefined;
     for (const line of candidates) {
       const size = line.size;
       // The cluster must rest on this baseline and rise to roughly x-height.
       if (cluster.y0 > line.y + size * 0.25 || cluster.y1 < line.y + size * 0.3) continue;
       if (cluster.y0 < line.y - size * 1.3 || cluster.y1 > line.y + size * 1.7) continue;
-      let distance = Infinity;
+      let gap = Infinity;
       let covers = false;
       for (const run of line.runs) {
-        const gap = Math.max(run.x - cluster.x1, cluster.x0 - (run.x + run.width), 0);
-        if (gap === 0) covers = true;
-        distance = Math.min(distance, gap);
+        const d = Math.max(run.x - cluster.x1, cluster.x0 - (run.x + run.width), 0);
+        if (d === 0) covers = true;
+        gap = Math.min(gap, d);
       }
-      if (covers || distance > size * (tiny ? 0.6 : 1.6)) continue;
-      if (!best || distance < best.distance) best = { line, distance };
+      if (covers) continue;
+      if (!best || gap < best.gap) best = { line, gap };
     }
-    if (!best) continue;
-    const { line } = best;
-    const list = result.get(line) ?? [];
-    list.push({
-      x0: cluster.x0 - 1,
-      y0: cluster.y0 - 1,
-      x1: cluster.x1 + 1,
-      y1: cluster.y1 + 1,
-      bodySize,
-      descent: (line.y - (cluster.y0 - 1)) / bodySize,
-    });
-    result.set(line, list);
+    if (best) found.push({ cluster, line: best.line, tiny, gap: best.gap, accepted: false });
+  }
+  const near = (item: Found) => item.line.size * (item.tiny ? 0.6 : 1.6);
+  for (const item of found) item.accepted = item.gap <= near(item);
+  // An equation is often drawn as several pieces (a function name, its
+  // arguments, an operator). A piece too far from the words still belongs when
+  // it touches an accepted piece of the same line with no word in between.
+  const between = (line: Line, from: number, to: number) =>
+    line.runs.some((run) => run.x + run.width > from + 0.5 && run.x < to - 0.5);
+  for (let changed = true; changed; ) {
+    changed = false;
+    for (const item of found) {
+      if (item.accepted) continue;
+      // Small marks (a bullet dot) may only join when practically touching.
+      const limit = item.line.size * (item.tiny ? 0.4 : 1.6);
+      const joins = found.some((other) => {
+        if (!other.accepted || other.line !== item.line) return false;
+        const gap = Math.max(
+          other.cluster.x0 - item.cluster.x1,
+          item.cluster.x0 - other.cluster.x1,
+          0,
+        );
+        if (gap > limit) return false;
+        const from = Math.min(item.cluster.x1, other.cluster.x1);
+        const to = Math.max(item.cluster.x0, other.cluster.x0);
+        return !between(item.line, from, to);
+      });
+      if (joins) {
+        item.accepted = true;
+        changed = true;
+      }
+    }
+  }
+  const byLine = new Map<Line, Rect[]>();
+  for (const item of found) {
+    if (!item.accepted) continue;
+    byLine.set(item.line, [...(byLine.get(item.line) ?? []), item.cluster]);
+  }
+  for (const [line, clusters] of byLine) {
+    clusters.sort((a, b) => a.x0 - b.x0);
+    // Pieces with no word between them are one equation, one picture.
+    const merged: Rect[] = [];
+    for (const piece of clusters) {
+      const last = merged[merged.length - 1];
+      if (last && piece.x0 - last.x1 <= line.size * 2.2 && !between(line, last.x1, piece.x0)) {
+        last.x0 = Math.min(last.x0, piece.x0);
+        last.y0 = Math.min(last.y0, piece.y0);
+        last.x1 = Math.max(last.x1, piece.x1);
+        last.y1 = Math.max(last.y1, piece.y1);
+      } else merged.push({ ...piece });
+    }
+    result.set(
+      line,
+      merged.map((rect) => ({
+        x0: rect.x0 - 1,
+        y0: rect.y0 - 1,
+        x1: rect.x1 + 1,
+        y1: rect.y1 + 1,
+        bodySize,
+        descent: (line.y - (rect.y0 - 1)) / bodySize,
+      })),
+    );
   }
   for (const list of result.values()) list.sort((a, b) => a.x0 - b.x0);
   return result;

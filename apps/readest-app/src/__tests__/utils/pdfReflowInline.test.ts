@@ -62,6 +62,45 @@ describe('inline equations drawn as vector outlines', () => {
     expect(page.blocks.map((b) => b.text)).toEqual(['first point', 'second point']);
     expect(page.blocks.every((b) => !b.inline)).toBe(true);
   });
+  it('joins the pieces of one equation into a single picture', () => {
+    // "c ∈ {…}": a letter right after the word, then pieces further out with no
+    // word between them. All of it is one equation, so one marker and one picture.
+    const pieces = [
+      shape(96, 699, 104, 708),
+      shape(104, 696, 107, 703),
+      shape(115, 699, 125, 709),
+      shape(135, 695, 145, 712),
+    ];
+    const page = run([item('其中', 72, 700), item('是', 190, 700)], pieces);
+    const block = page.blocks[0]!;
+    expect(block.text).toBe(`其中${M}是`);
+    expect(block.inline).toHaveLength(1);
+    expect(block.inline![0]!.x1).toBeGreaterThan(144);
+  });
+  it('does not join pieces across a word', () => {
+    const page = run(
+      [item('其中', 72, 700), item('的', 140, 700)],
+      [shape(96, 699, 104, 708), shape(104, 696, 107, 703), shape(160, 699, 170, 708)],
+    );
+    expect(page.blocks[0]!.text).toBe(`其中${M}的${M}`);
+    expect(page.blocks[0]!.inline).toHaveLength(2);
+  });
+  it("treats a disc left of a line-opening equation as that line's bullet", () => {
+    // Dot at x=80, equation at 96-108, text from 112: the line starts with an
+    // equation, so the dot is the list bullet and the lines stay separate.
+    const page = run(
+      [item('是总数', 112, 700), item('是个数', 112, 680)],
+      [
+        shape(80, 702, 83.5, 705.5),
+        shape(96, 699, 104, 708),
+        shape(104, 696, 107, 703),
+        shape(80, 682, 83.5, 685.5),
+        shape(96, 679, 104, 688),
+        shape(104, 676, 107, 683),
+      ],
+    );
+    expect(page.blocks.map((block) => block.text)).toEqual([`${M}是总数`, `${M}是个数`]);
+  });
   it('keeps an equation after the last word', () => {
     const page = run(
       [item('其中', 72, 700)],

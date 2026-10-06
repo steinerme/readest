@@ -21,4 +21,12 @@ describe('inline equation styling', () => {
     const block = rule('.pdf-reflow-inline-equation');
     expect(block).toMatch(/display:\s*inline-block/);
   });
+  // An inline-block takes its baseline from its last in-flow line box. With a
+  // marker character or an image in flow, the picture would sit a full box
+  // above where `vertical-align: -descent` puts it. Keeping both out of flow
+  // makes the bottom edge the baseline, so the offset means what it says.
+  it('keeps the marker and the picture out of normal flow', () => {
+    expect(rule('.pdf-reflow-inline-equation-mark')).toMatch(/position:\s*absolute/);
+    expect(rule('.pdf-reflow-inline-equation img')).toMatch(/position:\s*absolute/);
+  });
 });

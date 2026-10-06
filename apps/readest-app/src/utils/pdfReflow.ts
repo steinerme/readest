@@ -171,7 +171,13 @@ export function startsListItem(line: string, previous: string | undefined): bool
  * figures never reach here (their runs are consumed), and a dot must be well
  * smaller than the text, so rules, boxes and diagram nodes do not qualify.
  */
-function vectorBullets(lines: Line[], graphics: PdfGraphics | undefined, bodySize: number) {
+function vectorBullets(
+  lines: Line[],
+  graphics: PdfGraphics | undefined,
+  bodySize: number,
+  /** Where a line really starts when it opens with an inline equation. */
+  leftEdge?: Map<Line, number>,
+) {
   const found = { lines: new Set<Line>(), shapes: new Set<Rect>() };
   if (!graphics?.shapes.length) return found;
   const dots = graphics.shapes.filter((shape) => {
@@ -187,7 +193,7 @@ function vectorBullets(lines: Line[], graphics: PdfGraphics | undefined, bodySiz
   });
   for (const line of lines) {
     for (const dot of dots) {
-      const gap = line.x - dot.x1;
+      const gap = Math.min(line.x, leftEdge?.get(line) ?? Infinity) - dot.x1;
       const mid = (dot.y0 + dot.y1) / 2;
       // A disc well left of the first character is a bullet; a symbol set
       // against the text is part of an equation.
@@ -411,6 +417,12 @@ export function reflowPdfText(
       [...separators, ...layout.codeBoxes],
       codeLines,
     );
+    // A bullet in front of a line that opens with an equation: the dot sits
+    // left of the equation, not left of the first word.
+    const edges = new Map<Line, number>();
+    for (const [line, equations] of inlineByLine) edges.set(line, equations[0]!.x0);
+    const lateBullets = vectorBullets(kept, graphics, bodySize, edges);
+    for (const line of lateBullets.lines) dotLines.add(line);
     const marked = new Map<Line, { text: string; source: number[]; inline: InlineEquation[] }>();
     for (const [line, equations] of inlineByLine) {
       const joined = joinLineWithEquations(line, equations);

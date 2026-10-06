@@ -56,9 +56,12 @@ const PdfReflowInlineEquation = ({ equation, page, render, label }: Props) => {
         verticalAlign: `${(-equation.descent).toFixed(3)}em`,
       }}
     >
-      {/* The zero-width marker stays in the DOM so block text offsets used by
-          speech highlights and selection mapping are unchanged. */}
-      {INLINE_EQUATION_MARK}
+      {/* Nothing here is in normal flow: an inline-block with no in-flow
+          content has its bottom edge as its baseline, which is what the
+          vertical-align offset above is measured from. The zero-width marker
+          stays in the DOM so block text offsets used by speech highlights and
+          selection mapping are unchanged. */}
+      <span className='pdf-reflow-inline-equation-mark'>{INLINE_EQUATION_MARK}</span>
       {src && <img src={src} alt='' draggable={false} decoding='async' />}
     </span>
   );
