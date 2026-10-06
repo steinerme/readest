@@ -94,11 +94,12 @@
 .pdf-reflow-inline-equation {
   display: inline-block;
   position: relative;
+  /* Width, height and baseline offset are in em of the reading text, so this
+     element must keep the text's font-size (never 0: em would collapse). */
+  font-size: inherit;
   line-height: 0;
-  /* Sits on the text baseline; the picture keeps its own size. */
   user-select: none;
   -webkit-user-select: none;
-  font-size: 0;
 }
 .pdf-reflow-inline-equation img {
   display: block;
