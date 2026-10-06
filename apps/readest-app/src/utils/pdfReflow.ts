@@ -138,7 +138,8 @@ function dropDiagonalWatermark(runs: Run[], warn: (code: string) => void) {
 }
 
 const BULLET_MARK = /^(?:[•·●○▪◦‣∙■□◆◇▶▸➢➤*]|[-–—]\s)\s*\S/u;
-const NUMBER_MARK = /^(?:\d{1,2}[.)]\s|[（(]\d{1,2}[）)]\s*|\d{1,2}[、．]\s*)\S/u;
+const NUMBER_MARK =
+  /^(?:\d{1,2}[.)](?:\s|(?=\p{Script=Han}))|[（(]\d{1,2}[）)]\s*|\d{1,2}[、．]\s*)\S/u;
 const SENTENCE_END = /[.。;；:：!?！？)）]$/u;
 
 /**

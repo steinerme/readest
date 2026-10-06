@@ -31,6 +31,13 @@ describe('startsListItem', () => {
     expect(startsListItem('2) the result', 'in the year 2020')).toBe(false);
     expect(startsListItem('3. next', undefined)).toBe(false);
   });
+  it('splits a numbered item glued to Chinese text after a finished sentence', () => {
+    expect(startsListItem('6.假设你要设计一个智能体', '优势？')).toBe(true);
+    expect(startsListItem('6.假设你要设计一个智能体', '他们又有哪些改进和优势')).toBe(false);
+    expect(startsListItem('3.2节介绍了方法', '见上文。')).toBe(false);
+    expect(startsListItem('2.5倍的速度', '见上文。')).toBe(false);
+    expect(startsListItem('1.5Gb 的显存', '见上文。')).toBe(false);
+  });
   it('keeps CJK numbered markers working', () => {
     expect(startsListItem('（2）第二点', '（1）第一点')).toBe(true);
     expect(startsListItem('2、第二点', '第一点。')).toBe(true);
