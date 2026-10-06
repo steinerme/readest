@@ -1,4 +1,5 @@
-import type { PdfGraphics } from './pdfReflowGraphics';
+import type { PdfGraphics, Rect } from './pdfReflowGraphics';
+import { INLINE_EQUATION_MARK, findInlineEquations, type InlineEquation } from './pdfReflowInline';
 import {
   analyzeLayout,
   detectAlignedTables,
@@ -7,6 +8,7 @@ import {
 } from './pdfReflowLayout';
 import {
   buildLines,
+  joinLineRuns,
   joinLines,
   joinMapped,
   median,
@@ -43,6 +45,10 @@ export interface ReflowFigure {
   y0: number;
   x1: number;
   y1: number;
+  /** Body text size of the page in PDF units. A picture of an equation is shown
+   * at `size / bodySize` times the reading font size so its symbols match the
+   * surrounding text instead of shrinking with the page. */
+  bodySize?: number;
 }
 
 export interface ReflowBlock {
@@ -53,6 +59,9 @@ export interface ReflowBlock {
   text: string;
   table?: ReflowTableCell;
   figure?: ReflowFigure;
+  /** Inline equations drawn as vector outlines. Each one stands at a
+   * `INLINE_EQUATION_MARK` character in `text`, in order. */
+  inline?: InlineEquation[];
 }
 
 export interface ReflowPage {
@@ -162,8 +171,8 @@ export function startsListItem(line: string, previous: string | undefined): bool
  * figures never reach here (their runs are consumed), and a dot must be well
  * smaller than the text, so rules, boxes and diagram nodes do not qualify.
  */
-function vectorBulletLines(lines: Line[], graphics: PdfGraphics | undefined, bodySize: number) {
-  const found = new Set<Line>();
+function vectorBullets(lines: Line[], graphics: PdfGraphics | undefined, bodySize: number) {
+  const found = { lines: new Set<Line>(), shapes: new Set<Rect>() };
   if (!graphics?.shapes.length) return found;
   const dots = graphics.shapes.filter((shape) => {
     const w = shape.x1 - shape.x0;
@@ -177,19 +186,58 @@ function vectorBulletLines(lines: Line[], graphics: PdfGraphics | undefined, bod
     );
   });
   for (const line of lines) {
-    const hit = dots.some((dot) => {
+    for (const dot of dots) {
       const gap = line.x - dot.x1;
       const mid = (dot.y0 + dot.y1) / 2;
-      return (
-        gap >= -1 &&
+      // A disc well left of the first character is a bullet; a symbol set
+      // against the text is part of an equation.
+      if (
+        gap >= line.size * 0.4 &&
         gap <= line.size * 2.5 &&
         mid >= line.y - line.size * 0.15 &&
         mid <= line.y + line.size * 0.95
-      );
-    });
-    if (hit) found.add(line);
+      ) {
+        found.lines.add(line);
+        found.shapes.add(dot);
+      }
+    }
   }
   return found;
+}
+
+/**
+ * Re-join one line with an invisible marker where each inline equation sits.
+ * Words are positioned by geometry, so the marker goes between the last run
+ * that ends before the equation and the first that starts after it.
+ */
+function joinLineWithEquations(
+  line: Line,
+  equations: InlineEquation[],
+): { text: string; source: number[] } | null {
+  const runs = [...line.runs].sort((a, b) => a.x - b.x);
+  const parts: Run[] = [];
+  let next = 0;
+  const markRun = (equation: InlineEquation): Run => ({
+    text: INLINE_EQUATION_MARK,
+    source: [-1],
+    x: equation.x0,
+    y: line.y,
+    size: line.size,
+    width: equation.x1 - equation.x0,
+    rotated: false,
+  });
+  for (const run of runs) {
+    while (next < equations.length && equations[next]!.x0 < run.x + run.width / 2) {
+      parts.push(markRun(equations[next]!));
+      next += 1;
+    }
+    parts.push(run);
+  }
+  while (next < equations.length) parts.push(markRun(equations[next++]!));
+  const joined = joinLineRuns(parts, line.size);
+  if ((joined.text.match(new RegExp(INLINE_EQUATION_MARK, 'gu')) ?? []).length !== equations.length)
+    return null;
+  return joined;
 }
 
 /**
@@ -277,7 +325,11 @@ export function reflowPdfText(
   }
   for (const figure of layout.figures)
     entries.push({
-      block: { kind: 'figure', text: '', figure: { ...figure.rect } },
+      block: {
+        kind: 'figure',
+        text: '',
+        figure: { ...figure.rect, ...(figure.equation ? { bodySize: layout.bodySize } : {}) },
+      },
       source: [],
       top: figure.rect.y1,
       order: nextOrder(),
@@ -350,7 +402,20 @@ export function reflowPdfText(
       .filter((gap) => gap > bodySize * 0.6 && gap < bodySize * 2.1);
     const leading = median(gaps) || bodySize * 1.3;
     const leftMargin = Math.min(...kept.map((line) => line.x));
-    const dotLines = vectorBulletLines(kept, graphics, bodySize);
+    const bullets = vectorBullets(kept, graphics, bodySize);
+    const dotLines = bullets.lines;
+    const inlineByLine = findInlineEquations(
+      (graphics?.shapes ?? []).filter((shape) => !bullets.shapes.has(shape)),
+      kept,
+      bodySize,
+      [...separators, ...layout.codeBoxes],
+      codeLines,
+    );
+    const marked = new Map<Line, { text: string; source: number[]; inline: InlineEquation[] }>();
+    for (const [line, equations] of inlineByLine) {
+      const joined = joinLineWithEquations(line, equations);
+      if (joined) marked.set(line, { ...joined, inline: equations });
+    }
     let previous: Line | undefined;
     let current: Entry | undefined;
     for (const line of kept) {
@@ -386,22 +451,29 @@ export function reflowPdfText(
         rotated ||
         separated
       ) {
+        const own = marked.get(line);
         current = {
-          block: { kind, text: line.text },
-          source: line.source,
+          block: {
+            kind,
+            text: own?.text ?? line.text,
+            ...(own ? { inline: [...own.inline] } : {}),
+          },
+          source: own?.source ?? line.source,
           top: line.y,
           order: nextOrder(),
         };
         entries.push(current);
       } else {
+        const own = marked.get(line);
         const joined = joinMapped(
           { text: current.block.text, source: current.source },
-          line,
+          own ?? line,
           true,
           true,
         );
         current.block.text = joined.text;
         current.source = joined.source;
+        if (own) current.block.inline = [...(current.block.inline ?? []), ...own.inline];
       }
       previous = line;
     }

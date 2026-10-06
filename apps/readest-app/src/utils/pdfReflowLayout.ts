@@ -31,6 +31,8 @@ export interface FigureRegion {
   /** True when the region contains vector drawing whose text labels belong to
    * the picture and must not also appear in the text flow. */
   suppressText: boolean;
+  /** An equation drawn as glyph outlines (shown at reading-text scale). */
+  equation?: boolean;
 }
 
 export interface LayoutResult {
@@ -39,6 +41,8 @@ export interface LayoutResult {
   flowRuns: Run[];
   /** Large shaded boxes (code listings, call-outs): their lines never form tables. */
   codeBoxes: Rect[];
+  /** Page body text size, PDF units. */
+  bodySize: number;
   /** Segments/rects consumed by tables, for diagnostics and tests. */
   consumedSegments: number;
 }
@@ -779,7 +783,10 @@ function detectSparseTables(
 
 /* -------------------------------- figures -------------------------------- */
 
-const mergeOverlapping = (rects: Array<Rect & { vector: boolean }>, pad: number) => {
+const mergeOverlapping = (
+  rects: Array<Rect & { vector: boolean; equation?: boolean }>,
+  pad: number,
+) => {
   const items = rects.map((r) => ({ ...r }));
   let changed = true;
   while (changed) {
@@ -790,6 +797,7 @@ const mergeOverlapping = (rects: Array<Rect & { vector: boolean }>, pad: number)
           items[i] = {
             ...unionRect(items[i]!, items[j]!),
             vector: items[i]!.vector || items[j]!.vector,
+            equation: !!items[i]!.equation && !!items[j]!.equation,
           };
           items.splice(j, 1);
           changed = true;
@@ -895,7 +903,7 @@ function detectFigures(
     return tables.some((table) => inRect(table, cx, cy, 2));
   };
 
-  const candidates: Array<Rect & { vector: boolean }> = [];
+  const candidates: Array<Rect & { vector: boolean; equation?: boolean }> = [];
   // Raster images. Drop decorations, inline glyph images and page backgrounds.
   for (const image of graphics.images) {
     const w = image.x1 - image.x0;
@@ -992,7 +1000,7 @@ function detectFigures(
         y1: y + run.size * 0.9,
       });
     }
-    candidates.push({ ...rect, vector: parts.length > 0 });
+    candidates.push({ ...rect, vector: parts.length > 0, equation: true });
   }
 
   const merged = mergeOverlapping(candidates, 3);
@@ -1006,7 +1014,7 @@ function detectFigures(
     };
     if (rect.x1 - rect.x0 < 12 || rect.y1 - rect.y0 < 12) continue;
     if (!tables.some((t) => touches(t, rect) && areaOf(t) > areaOf(rect) * 0.6))
-      figures.push({ rect, suppressText: item.vector });
+      figures.push({ rect, suppressText: item.vector, equation: item.equation });
   }
   return figures.sort((a, b) => b.rect.y1 - a.rect.y1);
 }
@@ -1024,11 +1032,13 @@ export function analyzeLayout(
     figures: [],
     flowRuns: runs,
     codeBoxes: [],
+    bodySize: 0,
     consumedSegments: 0,
   };
   if (!graphics) return result;
   const upright = runs.filter((run) => !run.rotated);
   const bodySize = upright.length ? textSize(upright) : 10;
+  result.bodySize = bodySize;
 
   const hRules: Line1D[] = [];
   const vRules: Line1D[] = [];

@@ -681,6 +681,103 @@ describe('tables and figures in the reflow page', () => {
     expect(mocks.goTo).not.toHaveBeenCalled();
   });
 
+  it('shows an inline equation picture at the text scale and keeps block offsets', async () => {
+    const renderRegion = vi.fn(async () => 'blob:eq-1');
+    const slash = (x0: number, y0: number, x1: number, y1: number) => rule(x0, y0, x1, y1);
+    mocks.pages = [
+      {
+        getReflowText: vi.fn(() =>
+          Promise.resolve({
+            items: [
+              { str: '其中', transform: [10, 0, 0, 10, 72, 700], width: 20, height: 10 },
+              { str: '是总数', transform: [10, 0, 0, 10, 112, 700], width: 30, height: 10 },
+            ],
+            width: 612,
+            height: 792,
+            rotation: 0,
+          }),
+        ),
+        getReflowGraphics: vi.fn(() =>
+          Promise.resolve({
+            fnArray: [ops.constructPath, ops.constructPath],
+            argsArray: [slash(96, 699, 104, 708), slash(104, 696, 107, 703)],
+            ops,
+            width: 612,
+            height: 792,
+            origin: [0, 0],
+            rotation: 0,
+          }),
+        ),
+        renderReflowRegion: renderRegion,
+      } as never,
+    ];
+    const { container } = render(<PdfReflowDialog bookKey='pdf-1' onClose={vi.fn()} />);
+    const equation = await waitFor(() => {
+      const found = container.querySelector('[data-reflow-inline-equation]');
+      expect(found).toBeTruthy();
+      return found as HTMLElement;
+    });
+    const paragraph = container.querySelector('[data-reflow-block="0"]') as HTMLElement;
+    // The marker stays in the text, so offsets used by speech/selection hold.
+    expect(paragraph.textContent).toBe('其中\u2060是总数');
+    expect(equation.style.width).toMatch(/em$/);
+    await waitFor(() =>
+      expect(equation.querySelector('img')?.getAttribute('src')).toBe('blob:eq-1'),
+    );
+    expect(renderRegion).toHaveBeenCalledTimes(1);
+  });
+
+  it('draws a display equation at the reading size of the page text', async () => {
+    const slash = (x0: number, y0: number, x1: number, y1: number) => rule(x0, y0, x1, y1);
+    const glyphs = Array.from({ length: 8 }, (_, i) => slash(200 + i * 12, 650, 208 + i * 12, 660));
+    mocks.pages = [
+      {
+        getReflowText: vi.fn(() =>
+          Promise.resolve({
+            items: [
+              {
+                str: 'The identity is:',
+                transform: [10, 0, 0, 10, 72, 700],
+                width: 80,
+                height: 10,
+              },
+              {
+                str: 'and then we go on.',
+                transform: [10, 0, 0, 10, 72, 600],
+                width: 90,
+                height: 10,
+              },
+            ],
+            width: 612,
+            height: 792,
+            rotation: 0,
+          }),
+        ),
+        getReflowGraphics: vi.fn(() =>
+          Promise.resolve({
+            fnArray: glyphs.map(() => ops.constructPath),
+            argsArray: glyphs,
+            ops,
+            width: 612,
+            height: 792,
+            origin: [0, 0],
+            rotation: 0,
+          }),
+        ),
+        renderReflowRegion: vi.fn(async () => 'blob:eq-display'),
+      } as never,
+    ];
+    const { container } = render(<PdfReflowDialog bookKey='pdf-1' onClose={vi.fn()} />);
+    const figure = await waitFor(() => {
+      const found = container.querySelector('figure[data-reflow-equation]');
+      expect(found).toBeTruthy();
+      return found as HTMLElement;
+    });
+    // width = region width / body size, in em of the reading font.
+    expect(figure.style.width).toMatch(/^\d+(\.\d+)?em$/);
+    expect(parseFloat(figure.style.width)).toBeGreaterThan(8);
+  });
+
   it('shows a visible notice when a figure cannot be rendered', async () => {
     mocks.pages = [
       {

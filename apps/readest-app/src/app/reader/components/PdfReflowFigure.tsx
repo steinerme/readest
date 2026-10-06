@@ -7,6 +7,8 @@ interface Props {
   page: number;
   pageWidth?: number;
   pageHeight?: number;
+  /** Reading font size in CSS px; lets an equation picture match the text. */
+  fontSize?: number;
   render?: (
     rect: { x0: number; y0: number; x1: number; y1: number },
     maxWidth?: number,
@@ -24,6 +26,7 @@ const PdfReflowFigure = ({
   page,
   pageWidth,
   pageHeight,
+  fontSize,
   render,
   label,
   failedLabel,
@@ -74,12 +77,21 @@ const PdfReflowFigure = ({
   if (!rect) return null;
   const ratio = (rect.y1 - rect.y0) / Math.max(1, rect.x1 - rect.x0);
   const widthShare = pageWidth ? Math.min(1, (rect.x1 - rect.x0) / pageWidth) : 1;
+  // An equation picture is scaled so its symbols are as tall as the reading
+  // text: width = (region width / PDF body size) em. It never exceeds the column.
+  const equationEm =
+    rect.bodySize && rect.bodySize > 0 && fontSize ? (rect.x1 - rect.x0) / rect.bodySize : 0;
   return (
     <figure
       ref={ref}
       className='pdf-reflow-figure'
       data-reflow-figure={index}
-      style={{ width: `${Math.max(30, Math.round(widthShare * 100))}%`, maxWidth: '100%' }}
+      data-reflow-equation={equationEm ? '' : undefined}
+      style={
+        equationEm
+          ? { width: `${equationEm.toFixed(2)}em`, maxWidth: '100%' }
+          : { width: `${Math.max(30, Math.round(widthShare * 100))}%`, maxWidth: '100%' }
+      }
     >
       {src ? (
         <img src={src} alt={`${label} ${index + 1}`} draggable={false} decoding='async' />

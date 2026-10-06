@@ -81,6 +81,24 @@ export function joinText(left: string, right: string, space: boolean, wrapped = 
   return a + (space ? ' ' : '') + b;
 }
 
+/** Join one baseline's runs (already sorted left to right) into text. Geometry
+ * decides spacing; raised or lowered small runs attach without a space. */
+export function joinLineRuns(runs: Run[], size: number): { text: string; source: number[] } {
+  let acc = { text: '', source: [] as number[] };
+  let previous: Run | undefined;
+  for (const run of runs) {
+    const gap = previous ? run.x - (previous.x + previous.width) : 0;
+    const explicitSpace = !!previous && (/\s$/.test(previous.text) || /^\s/.test(run.text));
+    const superscript =
+      !!previous &&
+      Math.min(previous.size, run.size) < Math.max(previous.size, run.size) * 0.8 &&
+      Math.abs(previous.y - run.y) > size * 0.15;
+    acc = joinMapped(acc, run, !superscript && (explicitSpace || gap > size * 0.12));
+    previous = run;
+  }
+  return acc;
+}
+
 /** Group runs into baselines and join each baseline left-to-right.
  * `wideGapRows` counts rows with a large mid-page gap (possible columns). */
 export function buildLines(runs: Run[], pageWidth: number): { lines: Line[]; wideGapRows: number } {
@@ -139,20 +157,11 @@ export function buildLines(runs: Run[], pageWidth: number): { lines: Line[]; wid
         run.x > pageWidth * 0.35
       )
         wideGap = true;
-      const explicitSpace = !!previous && (/\s$/.test(previous.text) || /^\s/.test(run.text));
-      const superscript =
-        !!previous &&
-        Math.min(previous.size, run.size) < Math.max(previous.size, run.size) * 0.8 &&
-        Math.abs(previous.y - run.y) > line.size * 0.15;
-      const joined = joinMapped(
-        line,
-        run,
-        !superscript && (explicitSpace || gap > line.size * 0.12),
-      );
-      line.text = joined.text;
-      line.source = joined.source;
       previous = run;
     }
+    const joined = joinLineRuns(line.runs, line.size);
+    line.text = joined.text;
+    line.source = joined.source;
     line.wideGap = wideGap;
     if (wideGap) wideGapRows++;
   }

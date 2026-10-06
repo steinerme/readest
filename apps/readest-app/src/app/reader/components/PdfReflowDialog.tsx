@@ -1,4 +1,13 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import {
+  Fragment,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { useTTSPlayerHostStore } from '@/store/ttsPlayerHostStore';
 import { useThemeStore } from '@/store/themeStore';
 import { eventDispatcher } from '@/utils/event';
@@ -13,10 +22,12 @@ import { useReflowSelectionMenu } from '../hooks/useReflowSelectionMenu';
 import { useBookDataStore } from '@/store/bookDataStore';
 import { useReaderStore } from '@/store/readerStore';
 import { useTranslation } from '@/hooks/useTranslation';
+import { INLINE_EQUATION_MARK } from '@/utils/pdfReflowInline';
 import { reflowPdfText, type ReflowBlock, type ReflowPage } from '@/utils/pdfReflow';
 import { extractPdfGraphics, type PdfGraphics } from '@/utils/pdfReflowGraphics';
 import { groupReflowBlocks } from '@/utils/pdfReflowGroups';
 import PdfReflowFigure from './PdfReflowFigure';
+import PdfReflowInlineEquation from './PdfReflowInlineEquation';
 import '@/styles/pdf-reflow.css';
 import { readReflowSession, writeReflowSession } from '@/utils/pdfReflowSession';
 import { getPdfRendererPage, isPdfPageVisible } from '@/utils/pdfRendererPage';
@@ -453,6 +464,37 @@ const PdfReflowDialog = ({ bookKey, initialPage, onClose, onGoToLibrary }: Props
     });
   }, [config?.booknotes, result, view, page, relocationEpoch]);
 
+  /** Text of one slice of a block, with each inline-equation marker turned into
+   * its picture. The marker character itself stays in the DOM. */
+  const withEquations = (block: ReflowBlock, start: number, text: string) => {
+    if (!block.inline?.length || !text.includes(INLINE_EQUATION_MARK)) return text;
+    let ordinal = 0;
+    for (let k = 0; k < start; k++) if (block.text[k] === INLINE_EQUATION_MARK) ordinal++;
+    const nodes: ReactNode[] = [];
+    let from = 0;
+    for (let k = 0; k <= text.length; k++) {
+      if (k < text.length && text[k] !== INLINE_EQUATION_MARK) continue;
+      if (k > from) nodes.push(text.slice(from, k));
+      if (k < text.length) {
+        const equation = block.inline[ordinal];
+        if (equation)
+          nodes.push(
+            <PdfReflowInlineEquation
+              key={`eq-${start + k}`}
+              equation={equation}
+              page={page}
+              render={bookDoc?.sections[page]?.renderReflowRegion}
+              label={_('Equation')}
+            />,
+          );
+        else nodes.push(INLINE_EQUATION_MARK);
+        ordinal++;
+      }
+      from = k + 1;
+    }
+    return <>{nodes}</>;
+  };
+
   const renderBlockParts = (block: ReflowBlock, i: number) => {
     const spoken = tts.highlights.filter((h) => h.block === i);
     const notes = annotations.filter((h) => h.block === i);
@@ -469,6 +511,7 @@ const PdfReflowDialog = ({ bookKey, initialPage, onClose, onGoToLibrary }: Props
       const speech = spoken.some((h) => start >= h.start && end <= h.end);
       const annotation = notes.find((h) => start >= h.start && end <= h.end)?.note;
       const text = block.text.slice(start, end);
+      const content = withEquations(block, start, text);
       if (annotation)
         return (
           <mark
@@ -508,15 +551,15 @@ const PdfReflowDialog = ({ bookKey, initialPage, onClose, onGoToLibrary }: Props
               });
             }}
           >
-            {text}
+            {content}
           </mark>
         );
       return speech ? (
         <mark data-reflow-tts key={start}>
-          {text}
+          {content}
         </mark>
       ) : (
-        text
+        <Fragment key={start}>{content}</Fragment>
       );
     });
     return parts;
@@ -692,6 +735,7 @@ const PdfReflowDialog = ({ bookKey, initialPage, onClose, onGoToLibrary }: Props
                   page={page}
                   pageWidth={result.pageWidth}
                   pageHeight={result.pageHeight}
+                  fontSize={fontSize}
                   render={bookDoc?.sections[page]?.renderReflowRegion}
                   label={_('Figure')}
                   failedLabel={_('Figure could not be shown. Compare with the original page.')}
