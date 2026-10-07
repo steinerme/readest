@@ -27,13 +27,6 @@ export const Toast = () => {
     error: 'toast-error toast-top sm:toast-end toast-center',
   };
 
-  const alertClassMap = {
-    info: 'alert-primary border-base-300',
-    success: 'alert-success not-eink:from-green-500 not-eink:to-emerald-500',
-    warning: 'alert-warning not-eink:from-amber-500 not-eink:to-orange-500',
-    error: 'alert-error not-eink:from-red-500 not-eink:to-rose-500',
-  };
-
   const iconMap = {
     info: (
       <svg className='h-5 w-5' fill='currentColor' viewBox='0 0 20 20'>
@@ -127,10 +120,11 @@ export const Toast = () => {
         // Keep daisyUI's content-sized width, but retain the desktop cap
         // without allowing it to override the mobile viewport gutters.
         className={clsx(
-          'toast z-[130] max-w-[min(var(--breakpoint-sm),calc(100vw-2rem))] transition-all duration-300',
+          'claude-toast-wrap toast z-[130] max-w-[min(var(--breakpoint-sm),calc(100vw-2rem))] transition-opacity duration-200',
           toastClassMap[toastType],
-          isVisible ? 'scale-100 opacity-100' : 'scale-95 opacity-0',
+          isVisible ? 'opacity-100' : 'opacity-0',
         )}
+        data-visible={isVisible ? 'true' : 'false'}
         style={{
           top: toastClassMap[toastType].includes('toast-top')
             ? `${(safeAreaInsets?.top || 0) + TOP_BAR_HEIGHT + TOAST_GAP}px`
@@ -138,23 +132,21 @@ export const Toast = () => {
         }}
       >
         <div
+          data-type={toastType}
           className={clsx(
-            'alert flex items-center gap-3 shadow-2xl backdrop-blur-xs',
-            'min-h-0 rounded-2xl px-5 py-4',
-            'not-eink:bg-linear-to-r border-0',
-            alertClassMap[toastType],
+            'claude-toast alert flex items-center gap-3',
+            'min-h-0 rounded-2xl px-4 py-3',
             'eink:bg-base-100 eink:border eink:border-base-content',
-            toastType !== 'info' && 'text-white',
           )}
         >
           {/* Icon */}
-          <div className='shrink-0'>{iconMap[toastType]}</div>
+          <div className='claude-toast-icon shrink-0'>{iconMap[toastType]}</div>
 
           {/* Message */}
           <span
             className={clsx(
               'max-h-[50vh] flex-1 overflow-y-auto',
-              'font-sans text-base font-medium leading-snug sm:text-sm',
+              'font-sans text-[15px] leading-snug sm:text-sm',
               toastType === 'info'
                 ? 'max-w-[60vw] truncate sm:max-w-[80vw]'
                 : 'min-w-[60vw] max-w-[80vw] whitespace-normal break-words sm:min-w-40 sm:max-w-80',
@@ -176,7 +168,7 @@ export const Toast = () => {
               'shrink-0 rounded-lg p-1 transition-colors',
               toastType === 'info'
                 ? 'hover:bg-base-300 hidden'
-                : 'hover:bg-white/20 active:bg-white/30',
+                : 'text-base-content/60 hover:bg-base-content/10 active:bg-base-content/15',
             )}
             aria-label='Dismiss'
           >

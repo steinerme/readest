@@ -2,6 +2,7 @@ import clsx from 'clsx';
 import React from 'react';
 import { useThemeStore } from '@/store/themeStore';
 import { useTranslation } from '@/hooks/useTranslation';
+import ClaudeSpark from './ClaudeSpark';
 
 const Spinner: React.FC<{
   loading: boolean;
@@ -19,8 +20,11 @@ const Spinner: React.FC<{
       }}
       role='status'
     >
+      <span className={clsx('eink:hidden inline-flex', className)}>
+        <ClaudeSpark size={34} />
+      </span>
       <span
-        className={clsx('loading loading-lg not-eink:loading-dots eink:loading-spinner', className)}
+        className={clsx('not-eink:hidden loading loading-lg loading-spinner', className)}
       ></span>
       <span className='sr-only'>{_('Loading...')}</span>
     </div>

@@ -260,7 +260,7 @@ const HighlightOptions: React.FC<HighlightOptionsProps> = ({
             onClick={() => handleSelectStyle(style)}
             className={clsx(
               'eink-bordered not-eink:shadow-xs flex items-center justify-center rounded-full p-0',
-              'bg-base-300 theme-dark:bg-base-100',
+              'bg-base-100',
               selectedStyle === style
                 ? 'border-current border-2'
                 : 'not-eink:border-base-content/20 border',
@@ -325,7 +325,7 @@ const HighlightOptions: React.FC<HighlightOptionsProps> = ({
           onClick={() => onToggleGlobal?.()}
           className={clsx(
             'not-eink:border-base-content/20 eink-bordered not-eink:shadow-xs flex shrink-0 items-center justify-center rounded-full border p-0 transition-colors',
-            'bg-base-300 theme-dark:bg-base-100',
+            'bg-base-100',
             globalToggleActive
               ? 'not-eink:text-primary'
               : 'not-eink:text-base-content/80 hover:not-eink:text-base-content',
@@ -341,7 +341,7 @@ const HighlightOptions: React.FC<HighlightOptionsProps> = ({
         {...stripPointerHandlers}
         className={clsx(
           'not-eink:border-base-content/20 eink-bordered not-eink:shadow-xs flex items-center rounded-3xl border',
-          'bg-base-300 theme-dark:bg-base-100',
+          'bg-base-100',
           isVertical ? 'flex-col overflow-y-auto' : 'flex-row overflow-x-auto',
           !isVertical && 'cursor-grab',
           !isVertical && isDraggingColorStrip && 'cursor-grabbing',

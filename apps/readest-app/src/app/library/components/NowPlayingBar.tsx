@@ -142,7 +142,7 @@ const NowPlayingBar = ({ isSelectMode }: NowPlayingBarProps) => {
       aria-label={`${_('Reading aloud')}: ${title}`}
       className={clsx(
         'fixed bottom-0 start-1/2 z-40 -translate-x-1/2 rtl:translate-x-1/2',
-        'motion-safe:transition-all motion-safe:duration-200',
+        'motion-safe:transition-all motion-safe:duration-300 motion-safe:ease-[cubic-bezier(0.16,1,0.3,1)]',
         entered ? 'translate-y-0 opacity-100' : 'translate-y-2 opacity-0',
       )}
       style={{ paddingBottom: `${(safeAreaInsets?.bottom ?? 0) / 4 + 16}px` }}
@@ -156,7 +156,7 @@ const NowPlayingBar = ({ isSelectMode }: NowPlayingBarProps) => {
         }}
         aria-label={`${_('Open Book')}: ${title}`}
         className={clsx(
-          'not-eink:bg-base-300 eink-bordered flex items-center gap-2 rounded-full shadow-lg',
+          'claude-surface eink-bordered flex items-center gap-2 rounded-full',
           'h-14 max-w-[calc(100vw-2rem)] min-w-[60vw] sm:min-w-0 cursor-pointer px-2',
           'focus-visible:ring-primary focus-visible:ring-2 focus-visible:outline-hidden',
         )}

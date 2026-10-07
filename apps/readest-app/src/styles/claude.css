@@ -1,0 +1,597 @@
+/*
+ * Claude-inspired look and motion for the app chrome (never the book page).
+ *
+ * Principles
+ * - Paper, not glass: ivory/charcoal surfaces, hairline borders, soft layered
+ *   shadows instead of gray fills, gradients and blur.
+ * - Serif voice for headings and AI answers, sans for controls.
+ * - One motion vocabulary: things arrive quickly and settle slowly
+ *   (expo-out), sheets move with damped iOS-like curves, presses give a small
+ *   scale. Everything collapses to instant on e-ink and reduced motion.
+ *
+ * Rules that restyle daisyUI defaults use :where() inside the utilities layer
+ * so a utility class on an element still wins, as with the rest of
+ * globals.css. App-owned classes use normal specificity.
+ */
+
+:root {
+  --claude-ease: cubic-bezier(0.16, 1, 0.3, 1);
+  --claude-ease-in: cubic-bezier(0.4, 0, 1, 1);
+  --claude-ease-sheet: cubic-bezier(0.32, 0.72, 0, 1);
+  --claude-ease-spring: cubic-bezier(0.34, 1.4, 0.64, 1);
+  --claude-fast: 160ms;
+  --claude-base: 280ms;
+  --claude-slow: 440ms;
+  --claude-serif:
+    'Tiempos Text', 'Source Serif 4', 'Source Serif Pro', Georgia, 'Noto Serif', 'Noto Serif SC',
+    'Noto Serif CJK SC', 'Source Han Serif SC', 'Songti SC', ui-serif, serif;
+  --claude-hairline: color-mix(in oklab, var(--color-base-content) 10%, transparent);
+  --claude-hairline-strong: color-mix(in oklab, var(--color-base-content) 16%, transparent);
+  --claude-shadow-sm: 0 1px 2px rgb(31 30 29 / 0.05), 0 1px 1px rgb(31 30 29 / 0.03);
+  --claude-shadow:
+    0 1px 2px rgb(31 30 29 / 0.04), 0 6px 16px -4px rgb(31 30 29 / 0.08),
+    0 18px 40px -12px rgb(31 30 29 / 0.12);
+  --claude-shadow-lg:
+    0 2px 4px rgb(31 30 29 / 0.04), 0 12px 28px -6px rgb(31 30 29 / 0.12),
+    0 32px 64px -16px rgb(31 30 29 / 0.18);
+}
+
+html[data-theme$='-dark'] {
+  --claude-hairline: color-mix(in oklab, var(--color-base-content) 12%, transparent);
+  --claude-hairline-strong: color-mix(in oklab, var(--color-base-content) 20%, transparent);
+  --claude-shadow-sm: 0 1px 2px rgb(0 0 0 / 0.3);
+  --claude-shadow: 0 1px 2px rgb(0 0 0 / 0.25), 0 10px 28px -6px rgb(0 0 0 / 0.45);
+  --claude-shadow-lg: 0 2px 6px rgb(0 0 0 / 0.3), 0 24px 56px -12px rgb(0 0 0 / 0.55);
+}
+
+/* Clay buttons carry white labels, as in Claude; the derived 80%-black
+   content color reads muddy on #c96442. */
+html[data-theme^='default-'] {
+  --color-primary-content: #ffffff;
+  --color-secondary-content: #ffffff;
+  /* Active/selected states are hard-coded `*-blue-*` across ~20 components;
+     in the default theme they become clay instead of a stray blue. */
+  --color-blue-50: #fbf1ec;
+  --color-blue-100: #f6e0d6;
+  --color-blue-200: #edc1ad;
+  --color-blue-300: #e3a184;
+  --color-blue-400: #d97757;
+  --color-blue-500: #c96442;
+  --color-blue-600: #b4532f;
+  --color-blue-700: #964426;
+  --color-blue-800: #7a3820;
+  --color-blue-900: #5f2c1a;
+}
+
+html[data-theme='default-dark'] {
+  --color-blue-500: #d97757;
+  --color-blue-400: #e39074;
+}
+
+html {
+  accent-color: var(--color-primary);
+}
+
+html input::placeholder,
+html textarea::placeholder {
+  color: color-mix(in oklab, var(--color-base-content) 42%, transparent);
+}
+
+/* ---------- keyframes ---------- */
+
+@keyframes claude-rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes claude-pop {
+  from {
+    opacity: 0;
+    scale: 0.96;
+  }
+  to {
+    opacity: 1;
+    scale: 1;
+  }
+}
+
+@keyframes claude-fade {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes claude-drop {
+  from {
+    opacity: 0;
+    transform: translateY(-10px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes claude-spark-turn {
+  to {
+    rotate: 360deg;
+  }
+}
+
+@keyframes claude-spark-breathe {
+  0%,
+  100% {
+    scale: 0.82;
+    opacity: 0.85;
+  }
+  50% {
+    scale: 1.06;
+    opacity: 1;
+  }
+}
+
+@keyframes claude-caret {
+  0%,
+  100% {
+    opacity: 0.25;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/* ---------- thinking spark ---------- */
+
+.claude-spark {
+  display: inline-block;
+  color: var(--color-primary);
+  flex-shrink: 0;
+}
+
+.claude-spark > svg {
+  width: 100%;
+  height: 100%;
+  animation: claude-spark-turn 5.6s linear infinite;
+}
+
+.claude-spark > svg > g {
+  transform-origin: center;
+  transform-box: fill-box;
+  animation: claude-spark-breathe 1.6s var(--claude-ease) infinite;
+}
+
+.claude-spark[data-still='true'] > svg,
+.claude-spark[data-still='true'] > svg > g {
+  animation: none;
+}
+
+/* ---------- typography ---------- */
+
+.claude-serif,
+html .library-polish-empty h1,
+.dialog-header .font-bold {
+  font-family: var(--claude-serif);
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+.dialog-header .font-bold {
+  font-size: 1.0625rem;
+}
+
+::selection {
+  background-color: color-mix(in oklab, var(--color-primary) 26%, transparent);
+}
+
+@layer utilities {
+  /* ---------- buttons ---------- */
+  :where(.btn) {
+    transition:
+      background-color var(--claude-fast) var(--claude-ease),
+      border-color var(--claude-fast) var(--claude-ease),
+      color var(--claude-fast) var(--claude-ease),
+      box-shadow var(--claude-fast) var(--claude-ease),
+      scale var(--claude-fast) var(--claude-ease);
+  }
+
+  :where(.btn-primary) {
+    box-shadow:
+      inset 0 1px 0 rgb(255 255 255 / 0.14),
+      var(--claude-shadow-sm);
+  }
+
+  :where(.btn-outline) {
+    border-color: var(--claude-hairline-strong);
+    color: var(--color-base-content);
+    background-color: color-mix(in oklab, var(--color-base-100) 70%, transparent);
+  }
+
+  :where(.btn-outline:hover) {
+    border-color: color-mix(in oklab, var(--color-base-content) 26%, transparent);
+    background-color: var(--color-base-200);
+    color: var(--color-base-content);
+  }
+
+  :where(.btn-ghost:hover) {
+    background-color: color-mix(in oklab, var(--color-base-content) 6%, transparent);
+  }
+
+  .btn-ghost.btn-active {
+    background-color: color-mix(in oklab, var(--color-base-content) 9%, transparent);
+  }
+
+  /* ---------- fields ---------- */
+  :where(.input, .textarea, .select) {
+    border-color: var(--claude-hairline-strong);
+    background-color: var(--color-base-100);
+    transition:
+      border-color var(--claude-fast) var(--claude-ease),
+      box-shadow var(--claude-fast) var(--claude-ease);
+  }
+
+  :where(.input, .textarea, .select):focus,
+  :where(.input, .textarea, .select):focus-within {
+    outline: none;
+    border-color: color-mix(in oklab, var(--color-primary) 55%, transparent);
+    box-shadow: 0 0 0 3px color-mix(in oklab, var(--color-primary) 16%, transparent);
+  }
+
+  :where(.textarea) {
+    border-radius: 1rem;
+  }
+
+  /* ---------- menus & popovers ---------- */
+  .dropdown-content {
+    border: 1px solid var(--claude-hairline);
+    box-shadow: var(--claude-shadow);
+    border-radius: 16px;
+  }
+
+  /* Opacity only: Dropdown clamps the menu from its measured box (#5259). */
+  :where(.dropdown .dropdown-content) {
+    animation: claude-fade var(--claude-fast) var(--claude-ease);
+  }
+
+  .dropdown-content::after {
+    border-bottom-color: var(--claude-hairline);
+  }
+
+  :where(.menu li > :is(a, button, summary, span):not(.menu-title)) {
+    border-radius: 10px;
+    transition: background-color var(--claude-fast) var(--claude-ease);
+  }
+
+  :where(.tooltip) {
+    --tt-bg: var(--color-base-content);
+  }
+}
+
+html .popup-container {
+  border-radius: 16px;
+  background-color: var(--color-base-100) !important;
+  border-color: var(--claude-hairline-strong) !important;
+  box-shadow: var(--claude-shadow-lg) !important;
+}
+
+html .popup-container[aria-hidden='false'] {
+  animation: claude-pop var(--claude-base) var(--claude-ease);
+}
+
+html .popup-triangle-inner {
+  color: var(--color-base-100) !important;
+}
+
+html .popup-triangle-outer {
+  color: var(--claude-hairline-strong) !important;
+}
+
+/* ---------- dialogs & sheets ---------- */
+
+html .reading-dialog > .modal-box {
+  background-color: var(--color-base-100);
+  box-shadow: var(--claude-shadow-lg);
+}
+
+html .reading-dialog .dialog-overlay {
+  background-color: rgb(20 20 19 / 0.38);
+  transition: opacity var(--claude-base) var(--claude-ease);
+}
+
+html .reading-dialog .drag-handle > div {
+  width: 2.25rem;
+  height: 4px;
+  background-color: color-mix(in oklab, var(--color-base-content) 22%, transparent);
+}
+
+/* ---------- AI answer, rendered like a Claude reply ---------- */
+
+.claude-answer {
+  border: 0 !important;
+  padding: 0.25rem 0.125rem !important;
+  animation: claude-rise var(--claude-slow) var(--claude-ease);
+}
+
+.claude-answer .claude-answer-text {
+  font-family: var(--claude-serif);
+  font-size: 1.0625rem;
+  line-height: 1.75;
+  color: var(--color-base-content);
+}
+
+.claude-answer-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 500;
+  font-size: 0.8125rem;
+  color: color-mix(in oklab, var(--color-base-content) 62%, transparent);
+}
+
+.claude-caret {
+  display: inline-block;
+  width: 0.5em;
+  height: 1.05em;
+  margin-inline-start: 2px;
+  vertical-align: -0.15em;
+  border-radius: 2px;
+  background-color: var(--color-primary);
+  animation: claude-caret 1s ease-in-out infinite;
+}
+
+.claude-card {
+  border-radius: 1rem;
+  border: 1px solid var(--claude-hairline);
+  background-color: color-mix(in oklab, var(--color-base-200) 60%, var(--color-base-100));
+}
+
+.claude-composer {
+  border-radius: 1.25rem !important;
+  border: 1px solid var(--claude-hairline-strong) !important;
+  box-shadow: var(--claude-shadow-sm);
+  padding: 0.875rem 1rem !important;
+  font-size: 1rem;
+  line-height: 1.6;
+}
+
+.claude-composer:focus {
+  box-shadow:
+    0 0 0 3px color-mix(in oklab, var(--color-primary) 14%, transparent),
+    var(--claude-shadow);
+}
+
+/* ---------- floating dock & mini players ---------- */
+
+.claude-fab {
+  background-color: var(--color-base-100);
+  color: var(--color-base-content);
+  border: 1px solid var(--claude-hairline);
+  box-shadow: var(--claude-shadow);
+  transition:
+    scale var(--claude-fast) var(--claude-ease),
+    box-shadow var(--claude-fast) var(--claude-ease),
+    background-color var(--claude-fast) var(--claude-ease);
+}
+
+.claude-fab.claude-fab-accent {
+  background-color: var(--color-primary);
+  color: var(--color-primary-content);
+  border-color: transparent;
+}
+
+.claude-surface {
+  background-color: var(--color-base-100) !important;
+  border: 1px solid var(--claude-hairline);
+  box-shadow: var(--claude-shadow) !important;
+}
+
+/* ---------- toast ---------- */
+
+.claude-toast {
+  background-color: var(--color-base-100);
+  color: var(--color-base-content);
+  border: 1px solid var(--claude-hairline-strong);
+  box-shadow: var(--claude-shadow-lg);
+}
+
+.claude-toast[data-type='error'] .claude-toast-icon {
+  color: #c4472f;
+}
+.claude-toast[data-type='warning'] .claude-toast-icon {
+  color: #b7791f;
+}
+.claude-toast[data-type='success'] .claude-toast-icon {
+  color: #4d7c4f;
+}
+.claude-toast[data-type='info'] .claude-toast-icon {
+  color: var(--color-primary);
+}
+
+.claude-toast-wrap[data-visible='true'] .claude-toast {
+  animation: claude-drop var(--claude-base) var(--claude-ease-spring);
+}
+
+/* ---------- reader chrome ---------- */
+
+html .reading-chrome,
+html .reading-panel {
+  --reading-ease: var(--claude-ease);
+}
+
+html .reading-panel {
+  --reading-enter: 380ms;
+  --reading-exit: 200ms;
+  background-color: var(--color-base-100) !important;
+  border-top: 1px solid var(--claude-hairline);
+  box-shadow: 0 -12px 32px -8px rgb(31 30 29 / 0.1);
+}
+
+html .header-bar.reading-chrome {
+  border-bottom: 1px solid transparent;
+}
+
+/* ---------- library ---------- */
+
+html .library-polish-header {
+  border-bottom-color: var(--claude-hairline);
+}
+
+html .library-polish-header .library-polish-search {
+  border-color: var(--claude-hairline-strong);
+  background-color: var(--color-base-100);
+  box-shadow: var(--claude-shadow-sm);
+}
+
+html .library-polish-header .library-polish-search-shell {
+  border-radius: 9999px;
+}
+
+html .library-polish-header .library-polish-search-shell:focus-within {
+  outline: none;
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--color-primary) 18%, transparent);
+}
+
+html .library-polish .bookitem-main {
+  border-color: var(--claude-hairline);
+  box-shadow: var(--claude-shadow-sm);
+}
+
+html .library-polish .bookitem-main:not(.library-book-cover-spined) {
+  border-radius: 0.375rem;
+}
+
+html .library-polish .bookshelf-import-item button {
+  border-style: dashed;
+  border-color: var(--claude-hairline-strong);
+  border-radius: 0.375rem;
+  background-color: transparent;
+}
+
+html .library-polish-empty > div {
+  animation: claude-rise var(--claude-slow) var(--claude-ease) both;
+}
+
+/* ---------- motion ---------- */
+
+@media (prefers-reduced-motion: no-preference) {
+  html:not([data-eink='true']) :where(.btn):active,
+  html:not([data-eink='true']) .claude-fab:active {
+    scale: 0.96;
+  }
+
+  html:not([data-eink='true']) .claude-fab:hover {
+    box-shadow: var(--claude-shadow-lg);
+  }
+
+  html:not([data-eink='true']) body .library-polish .book-item {
+    transition: transform var(--claude-base) var(--claude-ease);
+  }
+
+  html:not([data-eink='true']) body .library-polish .book-item:active {
+    transform: scale(0.97);
+  }
+
+  html:not([data-eink='true']) body .library-polish .bookitem-main {
+    transition: box-shadow var(--claude-base) var(--claude-ease);
+  }
+
+  html:not([data-eink='true']) body .library-polish .book-item:hover .bookitem-main {
+    box-shadow: var(--claude-shadow);
+  }
+
+  html .reading-dialog > .modal-box {
+    transition:
+      translate var(--claude-slow) var(--claude-ease-sheet),
+      scale var(--claude-slow) var(--claude-ease-sheet),
+      opacity var(--claude-base) var(--claude-ease) !important;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) and (max-width: 639px),
+  (prefers-reduced-motion: no-preference) and (max-height: 639px) {
+  html .reading-dialog:not([open]) > .modal-box {
+    translate: 0 28px;
+  }
+}
+
+/* Page navigation: shorter travel, softer settle. */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: var(--claude-base);
+  animation-timing-function: var(--claude-ease);
+}
+
+@keyframes slide-fade-out-left {
+  to {
+    opacity: 0;
+    transform: translateX(-12px);
+  }
+}
+
+@keyframes slide-fade-in-right {
+  from {
+    opacity: 0;
+    transform: translateX(16px);
+  }
+}
+
+@keyframes slide-fade-out-right {
+  to {
+    opacity: 0;
+    transform: translateX(12px);
+  }
+}
+
+@keyframes slide-fade-in-left {
+  from {
+    opacity: 0;
+    transform: translateX(-16px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .claude-spark > svg,
+  .claude-spark > svg > g,
+  .claude-caret,
+  .claude-answer,
+  .popup-container[aria-hidden='false'],
+  .claude-toast-wrap[data-visible='true'] .claude-toast,
+  .library-polish-empty > div {
+    animation: none !important;
+  }
+}
+
+/* ---------- e-ink: no motion, no shadows, plain borders ---------- */
+
+html[data-eink='true'] .claude-spark > svg,
+html[data-eink='true'] .claude-spark > svg > g,
+html[data-eink='true'] .claude-caret,
+html[data-eink='true'] .claude-answer,
+html[data-eink='true'] .popup-container,
+html[data-eink='true'] .claude-toast,
+html[data-eink='true'] .library-polish-empty > div,
+html[data-eink='true'] :where(.dropdown .dropdown-content) {
+  animation: none !important;
+}
+
+html[data-eink='true'] .claude-fab,
+html[data-eink='true'] .claude-surface,
+html[data-eink='true'] .claude-toast,
+html[data-eink='true'] .claude-composer,
+html[data-eink='true'] .popup-container,
+html[data-eink='true'] .dropdown-content,
+html[data-eink='true'] .reading-panel,
+html[data-eink='true'] .library-polish .bookitem-main {
+  box-shadow: none !important;
+  border-color: var(--color-base-content) !important;
+}
+
+html[data-eink='true'] .claude-fab.claude-fab-accent {
+  background-color: var(--color-base-100);
+  color: var(--color-base-content);
+}

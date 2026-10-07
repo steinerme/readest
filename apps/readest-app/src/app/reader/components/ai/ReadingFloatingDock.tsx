@@ -96,7 +96,7 @@ export default function ReadingFloatingDock({
       ? PiPauseFill
       : PiPlayFill;
   const buttonClass =
-    'pointer-events-auto flex size-12 items-center justify-center rounded-full bg-neutral/80 text-neutral-content shadow-lg backdrop-blur-sm active:scale-95';
+    'claude-fab pointer-events-auto flex size-12 items-center justify-center rounded-full';
   return (
     <div
       ref={ref}
@@ -104,8 +104,8 @@ export default function ReadingFloatingDock({
       aria-hidden={hidden}
       // inert keeps hidden buttons out of focus order and away from touches
       inert={hidden}
-      className={`pointer-events-none absolute right-4 z-30 flex flex-col items-center gap-3 transition-opacity duration-200 ${
-        hidden ? 'opacity-0' : 'opacity-100'
+      className={`pointer-events-none absolute right-4 z-30 flex flex-col items-center gap-3 transition-[opacity,translate] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] ${
+        hidden ? 'translate-y-2 opacity-0' : 'translate-y-0 opacity-100'
       }`}
       style={{ bottom }}
     >
@@ -125,7 +125,7 @@ export default function ReadingFloatingDock({
         id='reading-dock-ai'
         aria-label='问这本书'
         title='问 AI'
-        className={`reading-ai-floating ${buttonClass}`}
+        className={`reading-ai-floating claude-fab-accent ${buttonClass}`}
         onPointerDown={stop}
         onClick={(event) => {
           event.stopPropagation();

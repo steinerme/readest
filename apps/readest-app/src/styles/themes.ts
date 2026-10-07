@@ -140,10 +140,48 @@ export const generateDarkPalette = ({ bg, fg, primary }: BaseColor) => {
 
 const _ = (stubKey: string) => stubKey;
 
+/**
+ * The default theme follows Claude's palette: warm ivory paper and clay accent
+ * in light mode, warm charcoal in dark mode. Surfaces are spelled out instead
+ * of derived, because the generators' gray steps read cold against ivory.
+ * `classic` keeps the previous white/blue default for anyone who prefers it.
+ */
+const CLAUDE_LIGHT: Palette = {
+  'base-100': '#faf9f5',
+  'base-200': '#f2f0e8',
+  'base-300': '#e7e4d9',
+  'base-content': '#1f1e1d',
+  neutral: '#dedad0',
+  'neutral-content': '#6f6d66',
+  primary: '#c96442',
+  secondary: '#d97757',
+  accent: '#a8573a',
+};
+
+const CLAUDE_DARK: Palette = {
+  'base-100': '#262624',
+  'base-200': '#2f2f2c',
+  'base-300': '#3a3936',
+  'base-content': '#ebe9e1',
+  neutral: '#3a3936',
+  'neutral-content': '#a6a39a',
+  primary: '#d97757',
+  secondary: '#c96442',
+  accent: '#e8a184',
+};
+
 export const themes = [
   {
     name: 'default',
     label: _('Default'),
+    colors: {
+      light: CLAUDE_LIGHT,
+      dark: CLAUDE_DARK,
+    },
+  },
+  {
+    name: 'classic',
+    label: _('Classic'),
     colors: {
       light: generateLightPalette({ fg: '#171717', bg: '#ffffff', primary: '#0066cc' }),
       dark: generateDarkPalette({ fg: '#e0e0e0', bg: '#222222', primary: '#77bbee' }),

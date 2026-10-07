@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import Dialog from '@/components/Dialog';
 import ModalPortal from '@/components/ModalPortal';
+import ClaudeSpark from '@/components/ClaudeSpark';
 import { useEnv } from '@/context/EnvContext';
 import { useSettingsStore } from '@/store/settingsStore';
 import { useBookDataStore } from '@/store/bookDataStore';
@@ -440,12 +441,12 @@ export default function ReadingAssistantPanel({ request, onClose }: Props) {
             </button>
           </div>
           {!ai.enabled && (
-            <p className='rounded-xl bg-base-200 p-3'>
+            <p className='claude-card p-3'>
               尚未启用 AI。请在 AI 设置中启用，并配置模型与 API。检索原文可以离线使用。
             </p>
           )}
           {recapMode && (
-            <div className='rounded-xl bg-base-200 p-3'>
+            <div className='claude-card p-3'>
               <p className='font-semibold'>基于你已读到的位置生成前情提要</p>
               {getOpenedResume(bookKey) && (
                 <p className='mt-1 break-words text-base-content/70'>
@@ -566,7 +567,7 @@ export default function ReadingAssistantPanel({ request, onClose }: Props) {
           {!recapMode && (
             <textarea
               aria-label='向阅读助手提问'
-              className='textarea w-full min-h-24'
+              className='claude-composer textarea w-full min-h-24'
               maxLength={2000}
               value={question}
               disabled={!!busy}
@@ -598,6 +599,12 @@ export default function ReadingAssistantPanel({ request, onClose }: Props) {
             >
               {busy === 'prepare' ? `正在检索 ${progress}` : '准备原文 · 本地检索'}
             </button>
+            {(busy === 'prepare' || (busy === 'request' && !answer)) && (
+              <span className='claude-answer-head' role='status'>
+                <ClaudeSpark size={18} />
+                {busy === 'prepare' ? '正在翻阅原文…' : '正在思考…'}
+              </span>
+            )}
             {busy && (
               <button className='btn btn-outline btn-sm' onClick={() => abort.current?.abort()}>
                 取消{busy === 'speech' ? '解释朗读' : '当前操作'}
@@ -605,7 +612,7 @@ export default function ReadingAssistantPanel({ request, onClose }: Props) {
             )}
           </div>
           {context && (
-            <section className='rounded-xl bg-base-200 p-3' aria-label='外发内容预览'>
+            <section className='claude-card p-3' aria-label='外发内容预览'>
               <p className='font-semibold'>发送前确认</p>
               <p className='my-2 break-words'>
                 目标：{destination}；将发送你的问题和以下 {context.passages.length} 个原文片段（
@@ -677,14 +684,15 @@ export default function ReadingAssistantPanel({ request, onClose }: Props) {
             </p>
           )}
           {answer && (
-            <section
-              aria-label='AI 回答'
-              className='space-y-3 rounded-xl border border-base-300 p-3'
-            >
-              <p className='font-semibold'>
+            <section aria-label='AI 回答' className='claude-answer space-y-3'>
+              <p className='claude-answer-head'>
+                <ClaudeSpark size={18} still={busy !== 'request'} />
                 {busy === 'request' ? 'AI 正在回答…' : 'AI 解读 · 请结合原文判断'}
               </p>
-              <p className='whitespace-pre-wrap break-words select-text'>{answer}</p>
+              <p className='claude-answer-text whitespace-pre-wrap break-words select-text'>
+                {answer}
+                {busy === 'request' && <span className='claude-caret' aria-hidden='true' />}
+              </p>
               {!busy && references.length === 0 && (
                 <p className='text-warning'>
                   答案未提供可识别的原文引用，不应当作已证实的书内结论。
@@ -749,9 +757,9 @@ export default function ReadingAssistantPanel({ request, onClose }: Props) {
                   role='status'
                   aria-live='polite'
                   aria-label='解释朗读状态'
-                  className='flex items-center gap-3 rounded-lg bg-base-200 p-2'
+                  className='claude-card flex items-center gap-3 p-2'
                 >
-                  <span className='loading loading-bars loading-sm' aria-hidden='true' />
+                  <ClaudeSpark size={18} />
                   <span className='flex-1 text-sm'>{speechLabel(speech)}</span>
                   <button className='btn btn-outline btn-sm' onClick={() => abort.current?.abort()}>
                     停止解释朗读
@@ -761,7 +769,7 @@ export default function ReadingAssistantPanel({ request, onClose }: Props) {
             </section>
           )}
           {history.length > 0 && (
-            <section aria-label='本书助手历史' className='rounded-xl border border-base-300 p-3'>
+            <section aria-label='本书助手历史' className='claude-card p-3'>
               <button
                 type='button'
                 className='flex w-full items-center justify-between font-semibold'
@@ -774,7 +782,7 @@ export default function ReadingAssistantPanel({ request, onClose }: Props) {
               {showHistory && (
                 <div className='mt-3 space-y-3'>
                   {[...history].reverse().map((entry) => (
-                    <div key={entry.id} className='rounded-xl bg-base-200 p-3'>
+                    <div key={entry.id} className='claude-card p-3'>
                       <p className='text-xs text-base-content/60'>
                         {new Date(entry.at).toLocaleString()}
                       </p>

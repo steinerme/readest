@@ -239,7 +239,7 @@ const TTSMiniPlayer = ({
       onMouseEnter={() => !appService?.isMobile && setHoveredBookKey('')}
       onTouchStart={() => !appService?.isMobile && setHoveredBookKey('')}
     >
-      <div className='not-eink:bg-base-300 eink-bordered relative overflow-hidden rounded-2xl shadow-lg'>
+      <div className='claude-surface eink-bordered relative overflow-hidden rounded-2xl'>
         <div className='flex items-center justify-end border-b border-base-content/10 px-2 py-1'>
           <button
             type='button'
