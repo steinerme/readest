@@ -101,10 +101,36 @@
   user-select: none;
   -webkit-user-select: none;
 }
+.pdf-reflow-inline-equation[data-standalone] {
+  /* Own line, centred, so the words before it are not stretched apart by a
+     justified line that ends early. */
+  display: block;
+  max-width: 100%;
+  margin: 0.25em auto;
+}
 .pdf-reflow-inline-equation-mark {
   position: absolute;
   left: 0;
   top: 0;
+}
+.pdf-reflow-ink {
+  /* An equation's ink mask (pdfReflowInk) painted in the text colour, so the
+     symbols match the words in light, dark and tinted themes alike. */
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  background-color: currentColor;
+  -webkit-mask-size: 100% 100%;
+  mask-size: 100% 100%;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  pointer-events: none;
+}
+.pdf-reflow-figure[data-reflow-equation] .pdf-reflow-ink {
+  position: relative;
+  display: block;
 }
 .pdf-reflow-inline-equation img {
   position: absolute;

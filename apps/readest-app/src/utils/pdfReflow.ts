@@ -1,5 +1,8 @@
 import type { PdfGraphics, Rect } from './pdfReflowGraphics';
 import { INLINE_EQUATION_MARK, findInlineEquations, type InlineEquation } from './pdfReflowInline';
+import { textFormulaRegions } from './pdfReflowFormula';
+import { findInlineTextFormulas } from './pdfReflowInlineText';
+import { assignRegions, regionAt, textBoxes, type Region } from './pdfReflowRegions';
 import {
   analyzeLayout,
   detectAlignedTables,
@@ -8,6 +11,7 @@ import {
 } from './pdfReflowLayout';
 import {
   buildLines,
+  fontClass,
   joinLineRuns,
   joinLines,
   joinMapped,
@@ -24,6 +28,8 @@ export interface PdfTextItem {
   height: number;
   hasEOL?: boolean;
   dir?: string;
+  /** pdf.js font id; resolved to a real name through `graphics.fonts`. */
+  fontName?: string;
 }
 
 export interface ReflowTableCell {
@@ -54,8 +60,9 @@ export interface ReflowFigure {
 export interface ReflowBlock {
   /** `cell` blocks are table cells: one block per cell so every index-based
    * service (speech highlight, selection, citation) keeps working unchanged.
-   * `figure` blocks have no text; the page region is rendered as a picture. */
-  kind: 'paragraph' | 'note' | 'cell' | 'figure';
+   * `figure` blocks have no text; the page region is rendered as a picture.
+   * `code` blocks keep their line breaks (\n) and leading indentation. */
+  kind: 'paragraph' | 'note' | 'cell' | 'figure' | 'code';
   text: string;
   table?: ReflowTableCell;
   figure?: ReflowFigure;
@@ -87,6 +94,11 @@ interface Entry {
   source: number[];
   top: number;
   order: number;
+  /** Reading-order position of the region group this entry belongs to. */
+  groupTop?: number;
+  groupX?: number;
+  /** Page area of a table this cell belongs to. */
+  rect?: Rect;
 }
 
 function tableEntries(
@@ -123,6 +135,7 @@ function tableEntries(
       source: text ? source.slice(0, text.trim().length) : [],
       top: table.rect.y1,
       order: next(),
+      rect: table.rect,
     });
   }
   return entries;
@@ -304,6 +317,8 @@ export function reflowPdfText(
     if (rotated) warn('rotated-text');
     const angle = Math.abs((Math.atan2(b!, a!) * 180) / Math.PI) % 90;
     const diagonal = rotated && item.dir !== 'ttb' && Math.min(angle, 90 - angle) > 3;
+    const fontName = item.fontName ? graphics?.fonts?.[item.fontName] || undefined : undefined;
+    const font = fontClass(fontName);
     allRuns.push({
       text,
       source,
@@ -313,6 +328,8 @@ export function reflowPdfText(
       width: Math.abs(item.width),
       rotated,
       diagonal,
+      ...(font ? { font } : {}),
+      ...(fontName ? { fontName } : {}),
     });
   }
   dropDiagonalWatermark(allRuns, warn);
@@ -322,6 +339,88 @@ export function reflowPdfText(
   const entries: Entry[] = [];
   let order = 0;
   const nextOrder = () => order++;
+  // A framed box of typeset output holding math (a LaTeX manual's "result"
+  // box beside its source) is shown as a picture of the box: its formulas,
+  // fractions and matrices cannot be rebuilt from loose glyphs.
+  const mathBoxes = textBoxes(
+    graphics,
+    allRuns.filter((run) => !run.rotated),
+    pageWidth,
+    pageHeight,
+    layout.bodySize || 10,
+  ).filter((box) => {
+    if (box.shaded) return false;
+    // A cell of a ruled table is not a stand-alone result box: a table cell
+    // shares its edges with neighbouring cells.
+    // Its top or bottom rule continues past the box's side (into the next
+    // cell), or its side rule continues past its top or bottom.
+    const shared = (graphics?.segments ?? []).filter((seg) => {
+      const sx0 = Math.min(seg.x0, seg.x1);
+      const sx1 = Math.max(seg.x0, seg.x1);
+      const sy0 = Math.min(seg.y0, seg.y1);
+      const sy1 = Math.max(seg.y0, seg.y1);
+      if (sy1 - sy0 < 0.5) {
+        const onEdge = Math.abs(sy0 - box.y0) < 2 || Math.abs(sy0 - box.y1) < 2;
+        const beyond =
+          (sx1 <= box.x0 + 2 && sx1 >= box.x0 - 2 && sx0 < box.x0 - 4) ||
+          (sx0 >= box.x1 - 2 && sx0 <= box.x1 + 2 && sx1 > box.x1 + 4);
+        return onEdge && beyond;
+      }
+      const onEdge = Math.abs(sx0 - box.x0) < 2 || Math.abs(sx0 - box.x1) < 2;
+      const beyond =
+        (sy1 <= box.y0 + 2 && sy1 >= box.y0 - 2 && sy0 < box.y0 - 4) ||
+        (sy0 >= box.y1 - 2 && sy0 <= box.y1 + 2 && sy1 > box.y1 + 4);
+      return onEdge && beyond;
+    }).length;
+    if (shared >= 2) return false;
+    let math = 0;
+    let mono = 0;
+    let total = 0;
+    for (const run of allRuns) {
+      const cx = run.x + run.width / 2;
+      const cy = run.y + run.size * 0.3;
+      if (cx < box.x0 || cx > box.x1 || cy < box.y0 || cy > box.y1) continue;
+      const n = run.text.trim().length;
+      total += n;
+      // TeX roman math fonts (cmr7/10…) set digits and operators of formulas;
+      // the CMU text fonts used for prose are not included.
+      if (run.font === 'math' || (run.fontName && /^cm(r|bx)\d/i.test(run.fontName))) math += n;
+      if (run.font === 'mono') mono += n;
+    }
+    return math >= 2 && mono < total * 0.3 && box.y1 - box.y0 < pageHeight * 0.4;
+  });
+  const boxed = new Set<Run>();
+  if (mathBoxes.length) {
+    const within = (r: { x0: number; y0: number; x1: number; y1: number }) =>
+      mathBoxes.some(
+        (box) =>
+          (r.x0 + r.x1) / 2 >= box.x0 &&
+          (r.x0 + r.x1) / 2 <= box.x1 &&
+          (r.y0 + r.y1) / 2 >= box.y0 &&
+          (r.y0 + r.y1) / 2 <= box.y1,
+      );
+    layout.tables = layout.tables.filter((table) => !within(table.rect));
+    layout.figures = layout.figures.filter((figure) => !within(figure.rect));
+  }
+  for (const box of mathBoxes) {
+    for (const run of runs) {
+      const cx = run.x + run.width / 2;
+      const cy = run.y + run.size * 0.3;
+      if (cx >= box.x0 && cx <= box.x1 && cy >= box.y0 && cy <= box.y1) boxed.add(run);
+    }
+    result.pageWidth = pageWidth;
+    result.pageHeight = pageHeight;
+    entries.push({
+      block: {
+        kind: 'figure',
+        text: '',
+        figure: { x0: box.x0, y0: box.y0, x1: box.x1, y1: box.y1 },
+      },
+      source: [],
+      top: box.y1,
+      order: nextOrder(),
+    });
+  }
   layout.tables.forEach((table, id) => {
     entries.push(...tableEntries(table, id, pageWidth, nextOrder));
   });
@@ -346,7 +445,63 @@ export function reflowPdfText(
     return result;
   }
 
-  let { lines } = buildLines(runs, pageWidth);
+  // Stacked inline formulas (fractions, sums with limits) set in math fonts are
+  // taken out of the text first and shown as small pictures in their sentence.
+  const bodyEstimate = layout.bodySize || textSize(runs.filter((run) => !run.rotated)) || 10;
+  const stacked = findInlineTextFormulas(
+    buildLines(
+      runs.filter((run) => !boxed.has(run)),
+      pageWidth,
+    ).lines,
+    runs.filter((run) => !boxed.has(run)),
+    bodyEstimate,
+  );
+  const stackedRuns = new Set(stacked.flatMap((item) => [...item.runs]));
+  // Display formulas set in math fonts are kept whole as pictures.
+  const formulas = textFormulaRegions(
+    runs.filter((run) => !boxed.has(run) && !stackedRuns.has(run)),
+    graphics?.segments ?? [],
+    pageWidth,
+    pageHeight,
+    layout.bodySize || textSize(runs.filter((run) => !run.rotated)) || 10,
+  );
+  let flow =
+    boxed.size || stackedRuns.size
+      ? runs.filter((run) => !boxed.has(run) && !stackedRuns.has(run))
+      : runs;
+  if (formulas.length) {
+    const used = new Set(formulas.flatMap((formula) => formula.runs));
+    flow = flow.filter((run) => !used.has(run));
+    result.pageWidth = pageWidth;
+    result.pageHeight = pageHeight;
+    for (const formula of formulas)
+      entries.push({
+        block: {
+          kind: 'figure',
+          text: '',
+          figure: {
+            x0: formula.x0,
+            y0: formula.y0,
+            x1: formula.x1,
+            y1: formula.y1,
+            bodySize: layout.bodySize || 10,
+          },
+        },
+        source: [],
+        top: formula.y1,
+        order: nextOrder(),
+      });
+  }
+  // Boxes, columns and margin notes are read as separate regions.
+  const blockers = [
+    ...layout.tables.map((t) => t.rect),
+    ...layout.figures.map((f) => f.rect),
+    ...formulas,
+    ...mathBoxes,
+  ];
+  const regionInfo = assignRegions(flow, graphics, pageWidth, pageHeight, blockers);
+  const { regions, regionOf } = regionInfo;
+  let { lines } = buildLines(flow, pageWidth, regionOf);
   // Tables whose cells differ in size/baseline are found on row blocks first;
   // rule-less aligned tables are then found on the remaining baselines.
   const inCode = (line: Line) => {
@@ -356,6 +511,33 @@ export function reflowPdfText(
     );
   };
   const codeLines = new Set(lines.filter(inCode));
+  // Lines set entirely in a typewriter font are code, whatever the shading.
+  // A code line may end in a comment in another (CJK) font: the line starts
+  // in the typewriter font and the comment follows a comment marker.
+  const monoLine = (line: Line) => {
+    let mono = 0;
+    let other = 0;
+    let comment = false;
+    for (const run of line.runs) {
+      const n = run.text.trim().length;
+      if (run.font === 'mono') {
+        mono += n;
+        if (/(^|\s)(%|#|\/\/)\s*$/u.test(run.text) || /(^|\s)(%|#|\/\/)\s/u.test(run.text))
+          comment = true;
+      } else if (!comment && !/^[\s\p{P}\p{S}\d]*$/u.test(run.text)) other += n;
+    }
+    const first = line.runs[0];
+    if (!(mono > 0) || first?.font !== 'mono') return false;
+    // A lone token in a typewriter font inside prose ("[SEP] is a …") is an
+    // inline identifier; code lines are either long or mostly typewriter.
+    if (comment) return true;
+    if (!(mono >= (mono + other) * 0.8 && (other === 0 || mono >= 12))) return false;
+    // A single short identifier ending a sentence ("bruce.", "cat.") wrapped
+    // onto its own line is prose, not a code listing.
+    return !(line.runs.length <= 2 && /^[A-Za-z_]\w{0,15}\.$/u.test(line.text.trim()) && !inCode(line));
+  };
+  const codeText = new Set(lines.filter(monoLine));
+  for (const line of codeText) codeLines.add(line);
   const tableCandidates = lines.filter((line) => !codeLines.has(line));
   const sparse = detectSparseTables(tableCandidates, pageWidth);
   sparse.tables.forEach((table, i) => {
@@ -366,15 +548,64 @@ export function reflowPdfText(
     lines.filter((line) => !codeLines.has(line)),
     pageWidth,
   );
-  aligned.tables.forEach((table, i) => {
+  // A short aligned grid made of digits, symbols and units around an equals
+  // sign is a stacked fraction equation, not a data table (NIST SI definition
+  // of the second is one example).
+  const numericFormula = (table: TableModel) => {
+    if (table.rows < 2 || table.rows > 4 || table.cols > 3) return false;
+    const text = table.cells
+      .flatMap((cell) => cell.runs)
+      .map((run) => run.text)
+      .join(' ');
+    const chars = text.replace(/\s/gu, '');
+    const numeric = (chars.match(/[0-9∆Δν=+\-−/]/gu) ?? []).length;
+    const words = (text.match(/[A-Za-z]{4,}/gu) ?? []).join('').length;
+    return /[=]/u.test(text) && numeric >= 10 && words < 10 && numeric > chars.length * 0.3;
+  };
+  const alignedTables = aligned.tables.filter((table) => !numericFormula(table));
+  const mathTables = aligned.tables.filter(numericFormula);
+  for (const table of mathTables) {
+    const pad = (layout.bodySize || 10) * 0.25;
+    const rect = {
+      x0: Math.max(0, table.rect.x0 - pad),
+      y0: Math.max(0, table.rect.y0 - pad),
+      x1: Math.min(pageWidth, table.rect.x1 + pad),
+      y1: Math.min(pageHeight, table.rect.y1 + pad),
+      bodySize: layout.bodySize || 10,
+    };
+    result.pageWidth = pageWidth;
+    result.pageHeight = pageHeight;
+    entries.push({
+      block: { kind: 'figure', text: '', figure: rect },
+      source: [],
+      top: rect.y1,
+      order: nextOrder(),
+    });
+  }
+  alignedTables.forEach((table, i) => {
     entries.push(
       ...tableEntries(table, layout.tables.length + sparse.tables.length + i, pageWidth, nextOrder),
     );
   });
   for (const line of aligned.code) codeLines.add(line);
   if (aligned.used.size) lines = lines.filter((line) => !aligned.used.has(line));
-  const wideGapRows = lines.filter((line) => line.wideGap).length;
-  const columns = wideGapRows >= 2;
+  // Rows still spanning a wide gap that no region explains (boxes, columns and
+  // margin notes are already separate) suggest an unrecognised layout.
+  const inFigure = (line: Line) =>
+    layout.figures.some(
+      (figure) =>
+        line.y >= figure.rect.y0 - line.size &&
+        line.y <= figure.rect.y1 + line.size &&
+        line.x >= figure.rect.x0 - line.size * 2 &&
+        line.end <= figure.rect.x1 + line.size * 2,
+    );
+  // Running heads and feet (page number far from the title) are not columns.
+  const margin = (line: Line) =>
+    pageHeight > 0 && (line.y > pageHeight * 0.9 || line.y < pageHeight * 0.08);
+  const wideGapRows = lines.filter(
+    (line) => line.wideGap && !codeLines.has(line) && !inFigure(line) && !margin(line),
+  ).length;
+  const columns = wideGapRows >= 3 && !regionInfo.twoColumns;
   if (columns) warn('possible-multiple-columns');
 
   const kept = lines.filter((line, index) => {
@@ -417,6 +648,20 @@ export function reflowPdfText(
       [...separators, ...layout.codeBoxes],
       codeLines,
     );
+    for (const item of stacked) {
+      const { equation } = item;
+      const target = kept.find(
+        (line) =>
+          Math.abs(line.y - item.line.y) <= line.size * 0.35 &&
+          line.x <= equation.x1 + line.size * 2 &&
+          line.end >= equation.x0 - line.size * 2,
+      );
+      if (!target) continue;
+      const list = inlineByLine.get(target) ?? [];
+      list.push(equation);
+      list.sort((a, b) => a.x0 - b.x0);
+      inlineByLine.set(target, list);
+    }
     // A bullet in front of a line that opens with an equation: the dot sits
     // left of the equation, not left of the first word.
     const edges = new Map<Line, number>();
@@ -428,10 +673,78 @@ export function reflowPdfText(
       const joined = joinLineWithEquations(line, equations);
       if (joined) marked.set(line, { ...joined, inline: equations });
     }
+    const regionOfLine = (line: Line): Region =>
+      regions[regionOf.get(line.runs[0]!) ?? 0] ?? regions[0]!;
+    // Code blocks keep line breaks and indentation relative to the block's
+    // leftmost line, measured in characters of the code font.
+    const codeIndent = (line: Line, left: number) => {
+      const glyph = median(
+        line.runs
+          .filter((run) => run.font === 'mono' && run.text.trim().length > 0)
+          .map((run) => run.width / Math.max(1, run.text.length)),
+      );
+      const width = glyph > 0 ? glyph : line.size * 0.5;
+      return ' '.repeat(Math.max(0, Math.min(40, Math.round((line.x - left) / width))));
+    };
+    const codeLeft = new Map<Region, number>();
+    for (const line of kept)
+      if (codeText.has(line)) {
+        const region = regionOfLine(line);
+        codeLeft.set(region, Math.min(codeLeft.get(region) ?? Infinity, line.x));
+      }
+    // Lines are read region by region: each region's lines top to bottom.
+    const byRegion = new Map<Region, Line[]>();
+    for (const line of kept) {
+      const region = regionOfLine(line);
+      const list = byRegion.get(region) ?? [];
+      list.push(line);
+      byRegion.set(region, list);
+    }
     let previous: Line | undefined;
     let current: Entry | undefined;
-    for (const line of kept) {
-      const kind: ReflowBlock['kind'] = line.size < bodySize * 0.85 ? 'note' : 'paragraph';
+    let previousRegion: Region | undefined;
+    const ordered = [...byRegion.values()].flat();
+    for (const line of ordered) {
+      const region = regionOfLine(line);
+      if (region !== previousRegion) {
+        previous = undefined;
+        current = undefined;
+        previousRegion = region;
+      }
+      const code = codeText.has(line);
+      const kind: ReflowBlock['kind'] = code
+        ? 'code'
+        : line.size < bodySize * 0.85
+          ? 'note'
+          : 'paragraph';
+      if (code && current?.block.kind === 'code' && previous && codeText.has(previous)) {
+        const gapCode = previous.y - line.y;
+        if (gapCode <= Math.max(leading, line.size) * 2.2) {
+          const indent = codeIndent(line, codeLeft.get(region) ?? line.x);
+          // Blank lines between code lines are kept as one empty line.
+          const blank = gapCode > Math.max(leading, line.size * 1.2) * 1.6 ? '\n' : '';
+          const prefix = `\n${blank}${indent}`;
+          current.block.text += prefix + line.text;
+          current.source.push(...prefix.split('').map(() => -1), ...line.source);
+          previous = line;
+          continue;
+        }
+      }
+      if (code) {
+        const indent = codeIndent(line, codeLeft.get(region) ?? line.x);
+        current = {
+          block: { kind: 'code', text: indent + line.text },
+          source: [...indent.split('').map(() => -1), ...line.source],
+          top: line.y,
+          order: nextOrder(),
+          ...(region.groupTop !== undefined
+            ? { groupTop: region.groupTop, groupX: region.groupX }
+            : {}),
+        };
+        entries.push(current);
+        previous = line;
+        continue;
+      }
       const gap = previous ? previous.y - line.y : Infinity;
       const sizeChange =
         previous && Math.max(previous.size, line.size) / Math.min(previous.size, line.size) > 1.18;
@@ -456,7 +769,7 @@ export function reflowPdfText(
         sizeChange ||
         indented ||
         columns ||
-        codeLines.has(line) ||
+        (codeLines.has(line) && !codeText.has(line)) ||
         (!!previous && codeLines.has(previous)) ||
         startsListItem(line.text, previous?.text) ||
         dotLines.has(line) ||
@@ -473,6 +786,9 @@ export function reflowPdfText(
           source: own?.source ?? line.source,
           top: line.y,
           order: nextOrder(),
+          ...(region.groupTop !== undefined
+            ? { groupTop: region.groupTop, groupX: region.groupX }
+            : {}),
         };
         entries.push(current);
       } else {
@@ -492,9 +808,28 @@ export function reflowPdfText(
   }
   if (!entries.length) return result;
 
-  // Reading order: top to bottom. Text already comes in visual row order, so
-  // a stable sort only interleaves tables and figures at their vertical place.
-  entries.sort((a, b) => b.top - a.top || a.order - b.order);
+  // Reading order: top to bottom. Entries of a region group (a column pair,
+  // side-by-side boxes) sort together at the group's top, left region first,
+  // each keeping its own internal order. Tables, figures and formulas inside a
+  // column join that column.
+  for (const entry of entries) {
+    if (entry.groupTop !== undefined || entry.block.kind === 'paragraph') continue;
+    if (entry.block.kind === 'note' || entry.block.kind === 'code') continue;
+    const rect = entry.block.figure ?? entry.rect;
+    const x = rect ? (rect.x0 + rect.x1) / 2 : undefined;
+    const y = rect ? (rect.y0 + rect.y1) / 2 : entry.top;
+    if (x === undefined) continue;
+    const region = regionAt(regions, x, y);
+    if (region.kind === 'column' && rect && rect.x1 - rect.x0 < pageWidth * 0.55) {
+      entry.groupTop = region.groupTop;
+      entry.groupX = region.groupX;
+    }
+  }
+  const key = (entry: Entry) => entry.groupTop ?? entry.top;
+  entries.sort(
+    (a, b) =>
+      key(b) - key(a) || (a.groupX ?? -1) - (b.groupX ?? -1) || b.top - a.top || a.order - b.order,
+  );
   for (const entry of entries) {
     result.blocks.push(entry.block);
     blockSources.push(entry.source);

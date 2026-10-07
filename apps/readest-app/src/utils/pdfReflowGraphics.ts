@@ -32,9 +32,13 @@ export interface PdfGraphics {
   shapes: Rect[];
   /** Filled axis-aligned boxes that are not thin rules (bars, cell shading). */
   fills: Rect[];
+  /** pdf.js font id -> real font name (subset prefix removed), when known. */
+  fonts?: Record<string, string>;
 }
 
 export interface PdfOperatorList {
+  /** Optional font id -> name table supplied alongside the operator list. */
+  fonts?: Record<string, string>;
   fnArray: ArrayLike<number>;
   argsArray: ArrayLike<unknown>;
 }
@@ -250,6 +254,7 @@ export function extractPdfGraphics(
   pageHeight: number,
 ): PdfGraphics {
   const result: PdfGraphics = { images: [], segments: [], shapes: [], fills: [] };
+  if (list.fonts) result.fonts = { ...list.fonts };
   try {
     const O = (name: string) => ops[name] ?? -1;
     const SAVE = O('save'),
@@ -386,7 +391,7 @@ export function extractPdfGraphics(
       result.segments.push(s);
     }
   } catch {
-    return { images: [], segments: [], shapes: [], fills: [] };
+    return { images: [], segments: [], shapes: [], fills: [], fonts: result.fonts };
   }
   return result;
 }

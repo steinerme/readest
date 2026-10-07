@@ -63,6 +63,32 @@ const unionRect = (a: Rect, b: Rect): Rect => ({
   y1: Math.max(a.y1, b.y1),
 });
 
+/** A short horizontal stroke whose ends touch no other stroke: an arrow
+ * shaft between a label and a value, not a piece of a cell border. */
+function floatingStrokes(segments: PdfGraphics['segments'], rect: Rect): number {
+  const inside = segments.filter(
+    (seg) =>
+      seg.x0 >= rect.x0 - 2 &&
+      seg.x1 <= rect.x1 + 2 &&
+      seg.y0 >= rect.y0 - 2 &&
+      seg.y1 <= rect.y1 + 2,
+  );
+  const touchesOther = (seg: (typeof inside)[number], x: number, y: number) =>
+    inside.some(
+      (o) =>
+        o !== seg &&
+        x >= Math.min(o.x0, o.x1) - 1.5 &&
+        x <= Math.max(o.x0, o.x1) + 1.5 &&
+        y >= Math.min(o.y0, o.y1) - 1.5 &&
+        y <= Math.max(o.y0, o.y1) + 1.5,
+    );
+  return inside.filter((seg) => {
+    const len = Math.abs(seg.x1 - seg.x0);
+    if (seg.y0 !== seg.y1 || len <= 4 || len >= (rect.x1 - rect.x0) * 0.2) return false;
+    return !touchesOther(seg, seg.x0, seg.y0) && !touchesOther(seg, seg.x1, seg.y1);
+  }).length;
+}
+
 class UnionFind {
   parent: number[];
   constructor(n: number) {
@@ -309,12 +335,23 @@ function detectGrids(hRaw: Line1D[], vRaw: Line1D[], runs: Run[]): GridResult {
       if (figureLike) {
         const xs = group.v.map((r) => r.pos);
         const ys = group.h.map((r) => r.pos);
-        result.rejectedBoxes.push({
+        const box = {
           x0: Math.min(...xs),
           x1: Math.max(...xs),
           y0: Math.min(...ys),
           y1: Math.max(...ys),
-        });
+        };
+        // A frame around a code listing is a text box, never a picture.
+        let mono = 0;
+        let total = 0;
+        for (const run of runs) {
+          const c = runCenter(run);
+          if (!inRect(box, c.x, c.y)) continue;
+          const n = run.text.trim().length;
+          total += n;
+          if (run.font === 'mono') mono += n;
+        }
+        if (!(total > 0 && mono >= total * 0.6)) result.rejectedBoxes.push(box);
       }
       result.leftoverHorizontals.push(...group.h);
     }
@@ -335,10 +372,17 @@ function segmentLine(line: Line, gap: number): Segment[] {
   const segments: Segment[] = [];
   let current: Segment | undefined;
   let end = -Infinity;
+  const NUMBER = /^[\s\d.,%+\-−–—()]+$/u;
   for (const run of line.runs) {
     // Blank runs are padding: they neither start a segment nor extend one.
     if (!run.text.trim()) continue;
-    if (!current || run.x - end > gap) {
+    // Numeric columns sit closer than word columns ("86.6 86.3", "- 78.0"):
+    // two numeric pieces separated by more than a narrow space are two cells.
+    const numeric =
+      !!current &&
+      NUMBER.test(run.text) &&
+      NUMBER.test(current.runs[current.runs.length - 1]!.text);
+    if (!current || run.x - end > gap || (numeric && run.x - end > gap * 0.4)) {
       current = { x0: run.x, x1: run.x + run.width, runs: [], text: '' };
       segments.push(current);
     }
@@ -413,10 +457,21 @@ function modelFromRows(
     const line = lines[index]!;
     const previous = rows[rows.length - 1];
     const firstEmpty = !cells.some((cell) => cell.col === 0);
+    // A sub-header row ("EM F1 EM F1" under spanning "Dev" / "Test") has
+    // as many cells as there are columns under the spans: it is a row of its
+    // own, not the wrapped continuation of the row above.
+    const filledAbove = new Set(
+      (previous?.cells ?? []).flatMap((cell) =>
+        Array.from({ length: cell.colSpan }, (_, k) => cell.col + k),
+      ),
+    );
+    const subHeader =
+      cells.length >= 2 && cells.filter((cell) => filledAbove.has(cell.col)).length >= 2;
     if (
       mergeContinuations &&
       previous &&
       firstEmpty &&
+      !subHeader &&
       previous.cells.some((cell) => cell.col === 0) &&
       previous.y - line.y <= leading * 1.3
     ) {
@@ -470,6 +525,147 @@ const segmentRect = (rows: Segment[][], lines: Line[]): Rect => ({
   y1: Math.max(...lines.map((l) => l.y + l.size * 0.9)),
 });
 
+/**
+ * A table whose rows are separated by rules (one rule per row, multi-line
+ * cells, a group-label column whose rules stop short). Rows are the bands
+ * between consecutive rules; columns are the left edges shared by the
+ * segments of most bands. Cell text joins every line of the band in reading
+ * order. Bands without text in the first column continue a spanning label.
+ */
+function bandTable(
+  group: Line1D[],
+  inside: Run[],
+  pageWidth: number,
+  rect: Rect,
+): TableModel | null {
+  const positions = [...new Set(group.map((r) => Math.round(r.pos * 2) / 2))].sort((a, b) => b - a);
+  if (positions.length < 5) return null;
+  const bands: Array<{ y0: number; y1: number; runs: Run[] }> = [];
+  for (let i = 0; i + 1 < positions.length; i++) {
+    const y1 = positions[i]!;
+    const y0 = positions[i + 1]!;
+    const runs = inside.filter((run) => {
+      const { y } = runCenter(run);
+      return y < y1 && y > y0;
+    });
+    if (runs.length) bands.push({ y0, y1, runs });
+  }
+  if (bands.length < 3) return null;
+  // Columns are separated by vertical gutters: x ranges that (almost) no
+  // segment of any band covers. Centred columns have scattered left edges, so
+  // the gutters, not the starts, define them.
+  const size = median(inside.map((r) => r.size)) || 10;
+  const segments = bands.flatMap((band) => {
+    const { lines } = buildLines(band.runs, pageWidth);
+    return lines.flatMap((line) => segmentLine(line, size * 1.0));
+  });
+  const x0 = Math.min(...segments.map((seg) => seg.x0));
+  const x1 = Math.max(...segments.map((seg) => seg.x1));
+  const step = 1;
+  const covered: number[] = [];
+  for (let x = x0; x <= x1; x += step)
+    covered.push(segments.filter((seg) => seg.x0 <= x && seg.x1 >= x).length);
+  const allowed = Math.max(1, Math.floor(segments.length * 0.02));
+  const gutters: Array<[number, number]> = [];
+  let start = -1;
+  covered.forEach((n, i) => {
+    if (n <= allowed) {
+      if (start < 0) start = i;
+    } else if (start >= 0) {
+      if ((i - start) * step >= size * 0.6) gutters.push([x0 + start * step, x0 + i * step]);
+      start = -1;
+    }
+  });
+  // Column boundaries: the middle of each gutter. Cells start right after it.
+  const columns = [x0, ...gutters.map(([a, b]) => (a + b) / 2)];
+  if (columns.length < 2 || columns.length > 8) return null;
+  const colOf = (x: number) => {
+    let c = 0;
+    for (let k = 0; k < columns.length; k++) if (x >= columns[k]! - 1) c = k;
+    return c;
+  };
+  // A text item that runs across a column boundary (two cells written as one
+  // string) is cut there, assuming evenly wide characters, so each part lands
+  // in its own cell. Source offsets stay with their characters.
+  const splitRun = (run: Run): Run[] => {
+    const parts: Run[] = [];
+    let rest = run;
+    for (const edge of columns.slice(1)) {
+      // Only a real crossing (at least about one character on each side) is
+      // cut; a run that just starts a hair before the edge belongs right.
+      if (!(rest.x < edge - rest.size * 0.6 && rest.x + rest.width > edge + rest.size * 0.6))
+        continue;
+      // CJK characters are about one em wide, Latin and punctuation about half.
+      const chars = Array.from(rest.text);
+      const weight = chars.map((ch) => (/[\u2e80-\u9fff\uff00-\uffef]/u.test(ch) ? 1 : 0.5));
+      const total = weight.reduce((a, b) => a + b, 0) || 1;
+      const unit = rest.width / total;
+      let cut = 0;
+      let used = 0;
+      while (cut < chars.length && rest.x + (used + weight[cut]! / 2) * unit < edge) {
+        used += weight[cut]!;
+        cut += 1;
+      }
+      if (cut <= 0 || cut >= chars.length) continue;
+      const head = chars.slice(0, cut).join('');
+      const tail = chars.slice(cut).join('');
+      parts.push({
+        ...rest,
+        text: head,
+        width: unit * used,
+        source: rest.source.slice(0, head.length),
+      });
+      rest = {
+        ...rest,
+        text: tail,
+        x: rest.x + unit * used,
+        width: rest.width - unit * used,
+        source: rest.source.slice(head.length),
+      };
+    }
+    parts.push(rest);
+    return parts;
+  };
+  const cells: TableCellModel[] = [];
+  bands.forEach((band, r) => {
+    const byCol: Run[][] = columns.map(() => []);
+    for (const run of band.runs.flatMap(splitRun))
+      byCol[colOf(run.x + Math.min(run.width / 2, run.size))]!.push(run);
+    byCol.forEach((runs, c) =>
+      cells.push({ row: r, col: c, rowSpan: 1, colSpan: 1, runs, header: r === 0 }),
+    );
+  });
+  // A label alone in the first column of a band, followed by bands whose
+  // first column is empty, spans them when it sits within those bands.
+  const first = (r: number) => cells.find((c) => c.row === r && c.col === 0);
+  for (let r = 1; r < bands.length; r++) {
+    const cell = first(r);
+    if (!cell || !cell.runs.length) continue;
+    let end = r;
+    while (end + 1 < bands.length && first(end + 1) && !first(end + 1)!.runs.length) end++;
+    let begin = r;
+    while (begin - 1 >= 1 && first(begin - 1) && !first(begin - 1)!.runs.length) begin--;
+    if (end === r && begin === r) continue;
+    // The label's own band must be between begin and end, and the label's
+    // centre should be near the middle of the spanned range.
+    const ys = cell.runs.map((run) => run.y);
+    const mid = (Math.max(...ys) + Math.min(...ys)) / 2;
+    const top = bands[begin]!.y1;
+    const bottom = bands[end]!.y0;
+    if (!(mid < top && mid > bottom)) continue;
+    for (let k = begin; k <= end; k++) {
+      if (k === r) continue;
+      const index = cells.findIndex((c) => c.row === k && c.col === 0);
+      if (index >= 0) cells.splice(index, 1);
+    }
+    cell.row = begin;
+    cell.rowSpan = end - begin + 1;
+    r = end;
+  }
+  cells.sort((a, b) => a.row - b.row || a.col - b.col);
+  return { rect, rows: bands.length, cols: columns.length, headerRows: 1, cells };
+}
+
 /* ---------------------------- rule-only tables --------------------------- */
 
 function detectRuleTables(
@@ -489,24 +685,99 @@ function detectRuleTables(
     const tol = Math.max(4, pageWidth * 0.035);
     return Math.abs(p.a - q.a) <= tol && Math.abs(p.b - q.b) <= tol;
   };
+  // Rules of one table share their horizontal extent. Tables side by side (two
+  // columns) interleave in y, so rules are grouped per extent first, then
+  // split where consecutive rules are too far apart or have no text between.
   const groups: Line1D[][] = [];
-  let current: Line1D[] = [];
+  const byExtent: Line1D[][] = [];
   for (const rule of long) {
-    const first = current[0];
-    if (
-      first &&
-      sameExtent(first, rule) &&
-      first.pos - rule.pos <= pageHeight * 0.6 &&
-      runs.some((run) => run.y > rule.pos && run.y < current[current.length - 1]!.pos)
-    ) {
-      current.push(rule);
-    } else {
-      if (current.length >= 2) groups.push(current);
-      current = [rule];
-    }
+    const bucket = byExtent.find((list) => sameExtent(list[0]!, rule));
+    if (bucket) bucket.push(rule);
+    else byExtent.push([rule]);
   }
-  if (current.length >= 2) groups.push(current);
+  for (const list of byExtent) {
+    let current: Line1D[] = [];
+    for (const rule of list) {
+      const first = current[0];
+      const last = current[current.length - 1];
+      // A caption ("Table 2: ...") between two rules ends one table.
+      const caption =
+        !!last &&
+        runs.some(
+          (run) =>
+            run.y > rule.pos &&
+            run.y < last.pos &&
+            run.x + run.width / 2 >= rule.a - 3 &&
+            run.x + run.width / 2 <= rule.b + 3 &&
+            /^(Table|Figure|Fig\.|表|图)\s*\d/u.test(run.text.trim()),
+        );
+      if (
+        first &&
+        last &&
+        !caption &&
+        first.pos - rule.pos <= pageHeight * 0.6 &&
+        last.pos - rule.pos <= pageHeight * 0.45 &&
+        runs.some(
+          (run) =>
+            run.y > rule.pos &&
+            run.y < last.pos &&
+            run.x + run.width / 2 >= rule.a - 3 &&
+            run.x + run.width / 2 <= rule.b + 3,
+        )
+      ) {
+        current.push(rule);
+      } else {
+        if (current.length >= 2) groups.push(current);
+        current = [rule];
+      }
+    }
+    if (current.length >= 2) groups.push(current);
+  }
 
+  // Two groups with the same right edge, one enclosing the other in height,
+  // whose left edges differ by a label column (group separators across the
+  // label column, row rules across the rest) may be one banded table. The
+  // merge is tentative: it is kept only when the bands form a table.
+  for (let i = 0; i < groups.length; i++)
+    for (let j = 0; j < groups.length; j++) {
+      if (i === j) continue;
+      const outer = groups[i]!;
+      const inner = groups[j]!;
+      if (outer.length < 3 || inner.length < 3) continue;
+      const oTop = Math.max(...outer.map((r) => r.pos));
+      const oBottom = Math.min(...outer.map((r) => r.pos));
+      const iTop = Math.max(...inner.map((r) => r.pos));
+      const iBottom = Math.min(...inner.map((r) => r.pos));
+      const oLeft = Math.min(...outer.map((r) => r.a));
+      const iLeft = Math.min(...inner.map((r) => r.a));
+      const oRight = Math.max(...outer.map((r) => r.b));
+      const iRight = Math.max(...inner.map((r) => r.b));
+      if (Math.abs(oRight - iRight) > 4) continue;
+      if (!(iLeft - oLeft > 8 && iLeft - oLeft <= pageWidth * 0.15)) continue;
+      if (!(oTop >= iTop && oBottom <= iBottom)) continue;
+      const merged = [...outer, ...inner].sort((p, q) => q.pos - p.pos);
+      const inside = runs.filter((run) => {
+        if (run.rotated) return false;
+        const { x, y } = runCenter(run);
+        return y < oTop + 1 && y > oBottom - 1 && x >= oLeft - 3 && x <= oRight + 3;
+      });
+      const mono = inside.filter((run) => run.font === 'mono').length;
+      if (inside.length < 8 || mono > inside.length * 0.3) continue;
+      const model = bandTable(merged, inside, pageWidth, {
+        x0: oLeft,
+        x1: oRight,
+        y0: oBottom,
+        y1: oTop,
+      });
+      if (!model) continue;
+      out.tables.push(model);
+      for (const run of inside) out.consumedRuns.add(run);
+      for (const rule of merged) out.usedRules.add(rule);
+      groups.splice(Math.max(i, j), 1);
+      groups.splice(Math.min(i, j), 1);
+      i = -1;
+      break;
+    }
   for (const group of groups) {
     const top = group[0]!;
     const bottom = group[group.length - 1]!;
@@ -522,7 +793,22 @@ function detectRuleTables(
     if (lines.length < 2) continue;
     const size = median(lines.map((l) => l.size)) || 10;
     const segments = lines.map((line) => segmentLine(line, size * 1.0));
-    const fit = inferColumns(segments, 0.5);
+    // Rules already bound the table; group labels ("Published", "Ours") and
+    // spanning headers take many rows, so a smaller modal share suffices.
+    const fit = inferColumns(segments, group.length >= 3 ? 0.3 : 0.4);
+    // Many rules: rows are the bands between rules (multi-line cells).
+    if (
+      group.length >= 6 &&
+      inside.filter((run) => run.font === 'mono').length < inside.length * 0.3
+    ) {
+      const banded = bandTable(group, inside, pageWidth, { x0, x1, y0: bottom.pos, y1: top.pos });
+      if (banded) {
+        out.tables.push(banded);
+        for (const run of inside) out.consumedRuns.add(run);
+        for (const rule of group) out.usedRules.add(rule);
+        continue;
+      }
+    }
     if (!fit) continue;
     const gaps = lines.slice(1).map((line, i) => lines[i]!.y - line.y);
     const leading = median(gaps) || size * 1.3;
@@ -890,6 +1176,7 @@ function detectFigures(
   tables: Rect[],
   usedRules: Set<Line1D>,
   extraBoxes: Rect[],
+  diagrams: Rect[],
   runs: Run[],
   pageWidth: number,
   pageHeight: number,
@@ -980,8 +1267,49 @@ function detectFigures(
       // Prose or table-like boxes carry ~8-12 characters per 1000 pt²; charts
       // and diagrams are far sparser.
       if ((chars / (w * h)) * 1000 >= 5) continue;
+      // A sparse code listing in a frame is still text, not a drawing.
+      const inBox = runs.filter((run) => {
+        const { x, y } = runCenter(run);
+        return inRect(box, x, y, 1);
+      });
+      const mono = inBox.filter((run) => run.font === 'mono').length;
+      if (inBox.length >= 2 && mono >= inBox.length * 0.6) continue;
       candidates.push({ ...box, vector: true });
     }
+  }
+
+  // Ruled boxes recognised as diagrams (arrows, images, shapes inside), merged
+  // with their neighbours into one picture whose labels are suppressed.
+  if (diagrams.length) {
+    let box = diagrams[0]!;
+    for (const d of diagrams) box = unionRect(box, d);
+    // Sibling boxes of the same width stacked right above or below (a third
+    // frame with a single row) belong to the same diagram.
+    for (let grown = true; grown; ) {
+      grown = false;
+      for (const fill of graphics.fills) {
+        const sameWidth = Math.abs(fill.x0 - box.x0) < 3 && Math.abs(fill.x1 - box.x1) < 3;
+        const near = fill.y1 >= box.y0 - bodySize * 1.5 && fill.y0 <= box.y1 + bodySize * 1.5;
+        const inside = fill.y0 >= box.y0 - 0.5 && fill.y1 <= box.y1 + 0.5;
+        if (sameWidth && near && !inside) {
+          box = unionRect(box, fill);
+          grown = true;
+        }
+      }
+    }
+    // Frame names set beside the boxes ("__main__", "cat_twice") are labels of
+    // the diagram: widen the picture to include them.
+    for (const run of runs) {
+      const text = run.text.trim();
+      if (!text || text.length > 20 || /\s/u.test(text)) continue;
+      const { y } = runCenter(run);
+      if (y < box.y0 || y > box.y1) continue;
+      const left = run.x + run.width <= box.x0 && box.x0 - (run.x + run.width) < bodySize * 3;
+      const right = run.x >= box.x1 && run.x - box.x1 < bodySize * 3;
+      if (left || right)
+        box = unionRect(box, { x0: run.x, x1: run.x + run.width, y0: box.y0, y1: box.y1 });
+    }
+    candidates.push({ ...box, vector: true });
   }
 
   // Equations on their own line become pictures, but never join or overlap a
@@ -1013,8 +1341,16 @@ function detectFigures(
       y1: Math.min(pageHeight, item.y1 + 2),
     };
     if (rect.x1 - rect.x0 < 12 || rect.y1 - rect.y0 < 12) continue;
-    if (!tables.some((t) => touches(t, rect) && areaOf(t) > areaOf(rect) * 0.6))
-      figures.push({ rect, suppressText: item.vector, equation: item.equation });
+    if (!tables.some((t) => touches(t, rect) && areaOf(t) > areaOf(rect) * 0.6)) {
+      // Short horizontal strokes inside the region (arrows between labels and
+      // values) mean a diagram whose labels belong to the picture.
+      const arrows = floatingStrokes(graphics.segments, rect);
+      figures.push({
+        rect,
+        suppressText: item.vector || (!item.equation && arrows >= 2),
+        equation: item.equation,
+      });
+    }
   }
   return figures.sort((a, b) => b.rect.y1 - a.rect.y1);
 }
@@ -1068,13 +1404,82 @@ export function analyzeLayout(
   });
   const consumed = new Set<Run>();
   const grids = detectGrids(hRules, vRules, upright);
+  // A ruled grid holding bitmaps or rounded/curved shapes is a diagram (boxes
+  // and arrows of a model figure), not a table: drop it so the figure
+  // detector keeps it as a picture.
+  const drawn = (rect: Rect, ruledGrid = false) => {
+    const pad = 2;
+    const hit = (r: Rect) =>
+      r.x0 >= rect.x0 - pad &&
+      r.x1 <= rect.x1 + pad &&
+      r.y0 >= rect.y0 - pad &&
+      r.y1 <= rect.y1 + pad;
+    const images = graphics.images.filter(hit).length;
+    const shapes = graphics.shapes.filter(hit).length;
+    // Short rules floating inside cells (arrows "line1 → 'Bing'") mark a
+    // diagram as well.
+    const arrows = floatingStrokes(graphics.segments, rect);
+    // In a fully ruled grid every short piece of cell border looks like a
+    // stroke; arrows are only evidence for rule-only (open) frames.
+    return images >= 2 || shapes >= 6 || (!ruledGrid && arrows >= 2);
+  };
+  const diagrams: Rect[] = [];
+  for (let i = grids.tables.length - 1; i >= 0; i--) {
+    const table = grids.tables[i]!;
+    if (!drawn(table.rect, true)) continue;
+    for (const cell of table.cells) for (const run of cell.runs) grids.consumedRuns.delete(run);
+    grids.rejectedBoxes.push(table.rect);
+    diagrams.push(table.rect);
+    grids.tables.splice(i, 1);
+  }
   grids.consumedRuns.forEach((run) => consumed.add(run));
+  // The top and bottom edges of a closed single box (a frame around a code
+  // listing or a typeset result) are not table rules.
+  const frameEdge = (rule: Line1D) =>
+    vRules.filter(
+      (v) =>
+        (Math.abs(v.pos - rule.a) <= JOIN_TOL || Math.abs(v.pos - rule.b) <= JOIN_TOL) &&
+        rule.pos >= v.a - JOIN_TOL &&
+        rule.pos <= v.b + JOIN_TOL,
+    ).length >= 2;
+  // Closed frames with floating arrows inside (a stack diagram's frames) are
+  // a drawing: they become one picture, their rules take no part in tables.
+  {
+    const frames: Rect[] = [];
+    const tops = grids.leftoverHorizontals.filter(frameEdge);
+    for (const top of tops)
+      for (const bottom of tops) {
+        if (bottom.pos >= top.pos - bodySize * 1.2) continue;
+        if (Math.abs(bottom.a - top.a) > JOIN_TOL || Math.abs(bottom.b - top.b) > JOIN_TOL)
+          continue;
+        const rect = { x0: top.a, x1: top.b, y0: bottom.pos, y1: top.pos };
+        // Nearest bottom only.
+        if (frames.some((f) => Math.abs(f.y1 - rect.y1) < 1 && f.y0 > rect.y0)) continue;
+        for (let k = frames.length - 1; k >= 0; k--)
+          if (Math.abs(frames[k]!.y1 - rect.y1) < 1 && frames[k]!.y0 < rect.y0) frames.splice(k, 1);
+        frames.push(rect);
+      }
+    const drawnFrames = frames.filter((frame) => floatingStrokes(graphics.segments, frame) >= 1);
+    if (drawnFrames.length >= 2) diagrams.push(...drawnFrames);
+  }
   const ruleOnly = detectRuleTables(
-    grids.leftoverHorizontals,
+    grids.leftoverHorizontals.filter((rule) => !frameEdge(rule)),
     upright.filter((run) => !consumed.has(run)),
     pageWidth,
     pageHeight,
   );
+  // A rule-only table that overlaps a ruled grid already judged a diagram
+  // (stacked frames of one drawing) is part of that drawing. Plain rejected
+  // boxes (code frames, call-outs) do not count.
+  const overlapsDrawn = (rect: Rect) =>
+    diagrams.some((box) => touches(box, rect, 2) && areaOf(box) > 0);
+  for (let i = ruleOnly.tables.length - 1; i >= 0; i--) {
+    const table = ruleOnly.tables[i]!;
+    if (!drawn(table.rect) && !overlapsDrawn(table.rect)) continue;
+    for (const cell of table.cells) for (const run of cell.runs) ruleOnly.consumedRuns.delete(run);
+    diagrams.push(table.rect);
+    ruleOnly.tables.splice(i, 1);
+  }
   ruleOnly.consumedRuns.forEach((run) => consumed.add(run));
   const tables = [...grids.tables, ...ruleOnly.tables];
   result.consumedSegments = grids.consumed + ruleOnly.usedRules.size;
@@ -1084,6 +1489,7 @@ export function analyzeLayout(
     tables.map((t) => t.rect),
     ruleOnly.usedRules,
     grids.rejectedBoxes,
+    diagrams,
     upright.filter((run) => !consumed.has(run)),
     pageWidth,
     pageHeight,
@@ -1092,7 +1498,38 @@ export function analyzeLayout(
   // Axis ticks, legends and node labels sit just outside the drawing's
   // bounding box. Absorb short, body-or-smaller labels hugging a vector figure;
   // full sentences (captions) stay in the text flow.
+  // Bitmap figures sometimes carry an invisible text layer of their labels
+  // ("统计", "1966 2003 2018"). Text lying wholly inside such a picture, none of
+  // it continuing outside on the same line, is already in the picture.
+  const rasters = figures.filter((figure) =>
+    graphics.images.some(
+      (image) =>
+        image.x0 >= figure.rect.x0 - 3 &&
+        image.x1 <= figure.rect.x1 + 3 &&
+        image.y0 >= figure.rect.y0 - 3 &&
+        image.y1 <= figure.rect.y1 + 3,
+    ),
+  );
+  const inRaster = (run: Run) => {
+    const figure = rasters.find(
+      (f) =>
+        run.x >= f.rect.x0 - 1 &&
+        run.x + run.width <= f.rect.x1 + 1 &&
+        run.y >= f.rect.y0 &&
+        run.y + run.size * 0.7 <= f.rect.y1 + 1,
+    );
+    if (!figure) return false;
+    // A sentence running across the picture's edge on the same baseline means
+    // the picture sits beside text, not under it.
+    return !runs.some(
+      (other) =>
+        other !== run &&
+        Math.abs(other.y - run.y) < run.size * 0.3 &&
+        (other.x + other.width < figure.rect.x0 - 2 || other.x > figure.rect.x1 + 2),
+    );
+  };
   const suppressed = (run: Run) => {
+    if (inRaster(run)) return true;
     const { x, y } = runCenter(run);
     const text = run.text.trim();
     const label =

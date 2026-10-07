@@ -22,7 +22,7 @@ import { useReflowSelectionMenu } from '../hooks/useReflowSelectionMenu';
 import { useBookDataStore } from '@/store/bookDataStore';
 import { useReaderStore } from '@/store/readerStore';
 import { useTranslation } from '@/hooks/useTranslation';
-import { INLINE_EQUATION_MARK } from '@/utils/pdfReflowInline';
+import { INLINE_EQUATION_MARK, type InlineEquation } from '@/utils/pdfReflowInline';
 import { reflowPdfText, type ReflowBlock, type ReflowPage } from '@/utils/pdfReflow';
 import { extractPdfGraphics, type PdfGraphics } from '@/utils/pdfReflowGraphics';
 import { groupReflowBlocks } from '@/utils/pdfReflowGroups';
@@ -45,6 +45,16 @@ interface Props {
 /** Page-based rendering mode inside the existing reader. Chrome, navigation,
  * settings, bookmarks and notes use the original services. Annotations require
  * a proven original text-layer Range; never generate CFIs from reflow DOM. */
+/** A wide inline equation that does not fit what is left of a line wraps to
+ * the next one, and a justified paragraph then spreads the few characters
+ * before it across the whole line. Such an equation in mid-sentence gets a line
+ * of its own instead; at the start of a block it stays inline. */
+const WIDE_INLINE_EM = 8;
+function wideInSentence(block: ReflowBlock, offset: number, equation: InlineEquation) {
+  if ((equation.x1 - equation.x0) / equation.bodySize < WIDE_INLINE_EM) return false;
+  return block.text.slice(0, offset).replaceAll(INLINE_EQUATION_MARK, '').trim().length > 0;
+}
+
 const PdfReflowDialog = ({ bookKey, initialPage, onClose, onGoToLibrary }: Props) => {
   const _ = useTranslation();
   const { safeAreaInsets, statusBarHeight, systemUIVisible } = useThemeStore();
@@ -482,6 +492,7 @@ const PdfReflowDialog = ({ bookKey, initialPage, onClose, onGoToLibrary }: Props
             <PdfReflowInlineEquation
               key={`eq-${start + k}`}
               equation={equation}
+              standalone={wideInSentence(block, start + k, equation)}
               page={page}
               render={bookDoc?.sections[page]?.renderReflowRegion}
               label={_('Equation')}

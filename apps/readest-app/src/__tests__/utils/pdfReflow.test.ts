@@ -132,18 +132,30 @@ describe('reflowPdfText', () => {
     expect(reflow([item(' \n\t ', 50, 700)]).warnings).toContain('empty-text');
   });
 
-  it('warns on repeated wide gaps suggesting multiple columns without losing text', () => {
+  it('keeps every word of rows that straddle a wide gap, in reading order', () => {
+    // Text on both sides of a wide gap is either a table, a second column or an
+    // unrecognised layout; whichever applies, no text may be lost or reordered
+    // within a row.
+    const result = reflow([
+      item('Left A a', 50, 700),
+      item('Right A runs on', 350, 700),
+      item('Left B', 50, 684),
+      item('Right B', 380, 684),
+      item('Left C is long', 50, 668),
+      item('Right C', 330, 668),
+    ]);
+    expect(result.blocks.map((block) => block.text).join(' ')).toBe(
+      'Left A a Right A runs on Left B Right B Left C is long Right C',
+    );
+  });
+  it('does not warn about columns for two wide-gap rows (a heading, a short pair)', () => {
     const result = reflow([
       item('Left A', 50, 700),
       item('Right A', 350, 700),
       item('Left B', 50, 684),
       item('Right B', 350, 684),
     ]);
-    expect(result.warnings).toContain('possible-multiple-columns');
-    expect(result.blocks).toHaveLength(2);
-    expect(result.blocks.map((block) => block.text).join(' ')).toBe(
-      'Left A Right A Left B Right B',
-    );
+    expect(result.warnings).not.toContain('possible-multiple-columns');
   });
 
   it('warns once about rotation and retains unsupported rotated text separately', () => {

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ReflowBlock } from '@/utils/pdfReflow';
+import { toInkMask } from '@/utils/pdfReflowInk';
 
 interface Props {
   index: number;
@@ -33,6 +34,7 @@ const PdfReflowFigure = ({
 }: Props) => {
   const ref = useRef<HTMLElement>(null);
   const [src, setSrc] = useState<string | null>(null);
+  const [mask, setMask] = useState(false);
   const [failed, setFailed] = useState(false);
   const [near, setNear] = useState(false);
   const rect = block.figure;
@@ -57,15 +59,29 @@ const PdfReflowFigure = ({
     let current = true;
     let url: string | null = null;
     setFailed(false);
+    // Equations are ink on paper: show them as a mask painted in the text
+    // colour so they follow the theme. Photos and charts keep their pixels.
+    const equation = !!(rect.bodySize && rect.bodySize > 0);
     render(rect, 1100)
-      .then((value) => {
+      .then(async (value) => {
         if (!current) {
           if (value) URL.revokeObjectURL(value);
           return;
         }
-        url = value;
-        if (value) setSrc(value);
-        else setFailed(true);
+        if (!value) {
+          setFailed(true);
+          return;
+        }
+        const ink = equation ? await toInkMask(value).catch(() => null) : null;
+        if (!current) {
+          URL.revokeObjectURL(ink ?? value);
+          if (ink) URL.revokeObjectURL(value);
+          return;
+        }
+        if (ink) URL.revokeObjectURL(value);
+        url = ink ?? value;
+        setMask(!!ink);
+        setSrc(url);
       })
       .catch(() => current && setFailed(true));
     return () => {
@@ -93,7 +109,18 @@ const PdfReflowFigure = ({
           : { width: `${Math.max(30, Math.round(widthShare * 100))}%`, maxWidth: '100%' }
       }
     >
-      {src ? (
+      {src && mask ? (
+        <span
+          className='pdf-reflow-ink'
+          role='img'
+          aria-label={`${label} ${index + 1}`}
+          style={{
+            WebkitMaskImage: `url(${src})`,
+            maskImage: `url(${src})`,
+            aspectRatio: `${1 / Math.max(0.01, ratio)}`,
+          }}
+        />
+      ) : src ? (
         <img src={src} alt={`${label} ${index + 1}`} draggable={false} decoding='async' />
       ) : failed ? (
         <div className='pdf-reflow-figure-failed' role='note'>

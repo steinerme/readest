@@ -1,0 +1,68 @@
+/**
+ * Equation pictures are black glyphs on the page's white paper. Shown as-is
+ * they are white boxes on dark or tinted reading themes. Here the bitmap is
+ * turned into an ink mask: dark pixels become opaque, paper becomes clear,
+ * and the reader paints the mask with the text colour, so an equation always
+ * looks like the words around it, in every theme.
+ */
+
+/** Darkness (0 = paper, 1 = ink) below which a pixel is dropped entirely. It
+ * removes faint page watermarks and scan noise behind the symbols. */
+const FLOOR = 0.22;
+/** Darkness at or above which a pixel is fully opaque. */
+const CEIL = 0.72;
+
+/**
+ * Rewrite RGBA pixels in place into an alpha mask: colour becomes black and
+ * alpha carries how much ink the pixel had. Anti-aliased edges keep partial
+ * alpha so the glyphs stay smooth.
+ */
+export function inkMaskPixels(data: Uint8ClampedArray): void {
+  for (let i = 0; i + 3 < data.length; i += 4) {
+    const r = data[i]!;
+    const g = data[i + 1]!;
+    const b = data[i + 2]!;
+    const a = data[i + 3]! / 255;
+    // Perceived lightness against white paper (transparent counts as paper).
+    const light = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+    const dark = (1 - light) * a;
+    const ink = Math.min(1, Math.max(0, (dark - FLOOR) / (CEIL - FLOOR)));
+    data[i] = 0;
+    data[i + 1] = 0;
+    data[i + 2] = 0;
+    data[i + 3] = Math.round(ink * 255);
+  }
+}
+
+/** Load a rendered region and return a blob URL of its ink mask (PNG), or
+ * null when the browser cannot read the pixels back. */
+export async function toInkMask(url: string): Promise<string | null> {
+  if (typeof document === 'undefined') return null;
+  const image = new Image();
+  image.decoding = 'async';
+  image.src = url;
+  try {
+    await image.decode();
+  } catch {
+    return null;
+  }
+  const width = image.naturalWidth;
+  const height = image.naturalHeight;
+  if (!width || !height) return null;
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext('2d', { willReadFrequently: true });
+  if (!context) return null;
+  context.drawImage(image, 0, 0);
+  let pixels: ImageData;
+  try {
+    pixels = context.getImageData(0, 0, width, height);
+  } catch {
+    return null;
+  }
+  inkMaskPixels(pixels.data);
+  context.putImageData(pixels, 0, 0);
+  const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
+  return blob ? URL.createObjectURL(blob) : null;
+}

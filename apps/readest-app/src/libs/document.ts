@@ -59,6 +59,8 @@ export interface SectionItem {
   }>;
   // PDF only: operator list for table rules / image placements / vector shapes.
   getReflowGraphics?: () => Promise<{
+    /** Font id -> real font name, used to tell code and math from prose. */
+    fonts?: Record<string, string>;
     fnArray: ArrayLike<number>;
     argsArray: ArrayLike<unknown>;
     ops: Record<string, number>;
