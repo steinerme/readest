@@ -172,9 +172,16 @@
   mask-repeat: no-repeat;
   pointer-events: none;
 }
-.pdf-reflow-figure[data-reflow-equation] .pdf-reflow-ink {
+/* Inside a figure (equation or any line-art picture) the mask is the figure's
+   only content: it must be in normal flow, as wide as the figure and as tall
+   as its aspect ratio. Out of flow it would size itself against the whole
+   page and stretch over the text. Only inline equations keep the absolute
+   layer above, because their box size is set on the wrapper. */
+.pdf-reflow-figure .pdf-reflow-ink {
   position: relative;
   display: block;
+  width: 100%;
+  height: auto;
 }
 .pdf-reflow-inline-equation img {
   position: absolute;

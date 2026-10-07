@@ -39,6 +39,18 @@ describe('inline equation styling', () => {
   it('paints equation ink in the text colour', () => {
     expect(rule('.pdf-reflow-ink')).toMatch(/background-color:\s*currentColor/);
   });
+  // 20035 regression: a line-art picture that is not an equation got the ink
+  // layer too, but only `[data-reflow-equation]` figures put it back in flow.
+  // Out of flow, the layer measured itself against the page and stretched the
+  // picture over the text. Every figure's ink layer must be in flow.
+  it('keeps the ink layer of every figure in normal flow, equation or not', () => {
+    const figureInk = rule('.pdf-reflow-figure .pdf-reflow-ink');
+    expect(figureInk).toMatch(/position:\s*relative/);
+    expect(figureInk).toMatch(/display:\s*block/);
+    expect(figureInk).toMatch(/height:\s*auto/);
+    // No rule limits the in-flow layout to equation figures only.
+    expect(css).not.toContain('.pdf-reflow-figure[data-reflow-equation] .pdf-reflow-ink');
+  });
   // A long code line or wide table is cut at the column edge; without a cue
   // the cut-off part looks like the whole line. The hidden edge fades out.
   it('fades the edge of a code block or table that hides content', () => {
