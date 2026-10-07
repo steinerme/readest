@@ -751,6 +751,17 @@ const PdfReflowDialog = ({ bookKey, initialPage, onClose, onGoToLibrary }: Props
                   label={_('Figure')}
                   failedLabel={_('Figure could not be shown. Compare with the original page.')}
                 />
+              ) : group.block.kind === 'code' ? (
+                // Code keeps its own lines and indentation: monospace, never
+                // justified, scrolls sideways instead of wrapping.
+                <pre
+                  data-reflow-block={group.index}
+                  className='pdf-reflow-code'
+                  key={group.index}
+                  tabIndex={0}
+                >
+                  {renderBlockParts(group.block, group.index)}
+                </pre>
               ) : group.block.kind === 'note' ? (
                 <aside
                   data-reflow-block={group.index}

@@ -30,6 +30,20 @@
   margin: 0 0 1.15em;
   white-space: pre-wrap;
 }
+.pdf-reflow-code {
+  margin: 0 0 1.15em;
+  padding: 0.7em 0.9em;
+  font-family: ui-monospace, 'SFMono-Regular', Menlo, Consolas, 'Noto Sans Mono CJK SC', monospace;
+  font-size: 0.82em;
+  line-height: 1.55;
+  text-align: start;
+  white-space: pre;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-x pan-y;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--color-base-content) 6%, var(--color-base-100));
+}
 .pdf-reflow-note {
   font-size: 0.78em;
   line-height: 1.75;

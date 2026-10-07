@@ -29,4 +29,14 @@ describe('inline equation styling', () => {
     expect(rule('.pdf-reflow-inline-equation-mark')).toMatch(/position:\s*absolute/);
     expect(rule('.pdf-reflow-inline-equation img')).toMatch(/position:\s*absolute/);
   });
+  // Code blocks carry real line breaks and leading spaces; a collapsing
+  // white-space would fold a listing into one line.
+  it('keeps code lines and indentation', () => {
+    expect(rule('.pdf-reflow-code')).toMatch(/white-space:\s*pre(-wrap)?\s*;/);
+  });
+  // Equations painted through an ink mask take the reading text colour, so
+  // they never show as white boxes in dark themes.
+  it('paints equation ink in the text colour', () => {
+    expect(rule('.pdf-reflow-ink')).toMatch(/background-color:\s*currentColor/);
+  });
 });

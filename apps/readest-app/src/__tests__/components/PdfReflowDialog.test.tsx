@@ -681,6 +681,56 @@ describe('tables and figures in the reflow page', () => {
     expect(mocks.goTo).not.toHaveBeenCalled();
   });
 
+  it('shows code in a preformatted block that keeps its lines and indentation', async () => {
+    mocks.pages = [
+      {
+        getReflowText: vi.fn(() =>
+          Promise.resolve({
+            items: [
+              {
+                str: 'def f(n):',
+                transform: [10, 0, 0, 10, 100, 700],
+                width: 45,
+                height: 10,
+                fontName: 'm',
+              },
+              {
+                str: 'return n',
+                transform: [10, 0, 0, 10, 120, 688],
+                width: 40,
+                height: 10,
+                fontName: 'm',
+              },
+            ],
+            width: 612,
+            height: 792,
+            rotation: 0,
+          }),
+        ),
+        getReflowGraphics: vi.fn(() =>
+          Promise.resolve({
+            fonts: { m: 'SFTT1000' },
+            fnArray: [],
+            argsArray: [],
+            ops,
+            width: 612,
+            height: 792,
+            origin: [0, 0],
+            rotation: 0,
+          }),
+        ),
+      } as never,
+    ];
+    const { container } = render(<PdfReflowDialog bookKey='pdf-1' onClose={vi.fn()} />);
+    const code = await waitFor(() => {
+      const found = container.querySelector('pre.pdf-reflow-code');
+      expect(found).toBeTruthy();
+      return found as HTMLElement;
+    });
+    expect(code.getAttribute('data-reflow-block')).toBe('0');
+    expect(code.textContent).toBe('def f(n):\n    return n');
+  });
+
   it('shows an inline equation picture at the text scale and keeps block offsets', async () => {
     const renderRegion = vi.fn(async () => 'blob:eq-1');
     const slash = (x0: number, y0: number, x1: number, y1: number) => rule(x0, y0, x1, y1);
