@@ -60,7 +60,9 @@ const PdfReflowFigure = ({
     let url: string | null = null;
     setFailed(false);
     // Equations are ink on paper: show them as a mask painted in the text
-    // colour so they follow the theme. Photos and charts keep their pixels.
+    // colour so they follow the theme. Other pictures get the same treatment
+    // only when they turn out to be black-and-white line art; photos and
+    // colour charts keep their pixels.
     const equation = !!(rect.bodySize && rect.bodySize > 0);
     render(rect, 1100)
       .then(async (value) => {
@@ -72,7 +74,7 @@ const PdfReflowFigure = ({
           setFailed(true);
           return;
         }
-        const ink = equation ? await toInkMask(value).catch(() => null) : null;
+        const ink = await toInkMask(value, { lineArtOnly: !equation }).catch(() => null);
         if (!current) {
           URL.revokeObjectURL(ink ?? value);
           if (ink) URL.revokeObjectURL(value);

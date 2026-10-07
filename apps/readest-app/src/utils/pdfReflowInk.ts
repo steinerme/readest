@@ -34,9 +34,44 @@ export function inkMaskPixels(data: Uint8ClampedArray): void {
   }
 }
 
+/** Share of pixels that must be plain paper for a picture to count as line art. */
+const LINE_ART_PAPER = 0.8;
+/** Largest share of clearly coloured pixels a line-art picture may have. */
+const LINE_ART_COLOUR = 0.01;
+
+/**
+ * Whether RGBA pixels are black-and-white line art on white paper: typeset
+ * output boxes, framed sample tables, monochrome diagrams. Such pictures look
+ * like a white sheet pasted on a dark page, so they are shown as an ink mask
+ * too. Photos, colour charts and shaded figures keep their own pixels.
+ */
+export function isLineArt(data: Uint8ClampedArray): boolean {
+  const count = Math.floor(data.length / 4);
+  if (!count) return false;
+  let paper = 0;
+  let colour = 0;
+  for (let i = 0; i + 3 < data.length; i += 4) {
+    const r = data[i]!;
+    const g = data[i + 1]!;
+    const b = data[i + 2]!;
+    if (data[i + 3]! < 128) {
+      paper++;
+      continue;
+    }
+    if (Math.max(r, g, b) - Math.min(r, g, b) > 40) colour++;
+    else if ((0.299 * r + 0.587 * g + 0.114 * b) / 255 >= 0.9) paper++;
+  }
+  return paper / count >= LINE_ART_PAPER && colour / count <= LINE_ART_COLOUR;
+}
+
 /** Load a rendered region and return a blob URL of its ink mask (PNG), or
- * null when the browser cannot read the pixels back. */
-export async function toInkMask(url: string): Promise<string | null> {
+ * null when the browser cannot read the pixels back. With `lineArtOnly`, a
+ * picture that is not black-and-white line art also returns null, so the
+ * caller keeps the original bitmap. */
+export async function toInkMask(
+  url: string,
+  options: { lineArtOnly?: boolean } = {},
+): Promise<string | null> {
   if (typeof document === 'undefined') return null;
   const image = new Image();
   image.decoding = 'async';
@@ -61,6 +96,7 @@ export async function toInkMask(url: string): Promise<string | null> {
   } catch {
     return null;
   }
+  if (options.lineArtOnly && !isLineArt(pixels.data)) return null;
   inkMaskPixels(pixels.data);
   context.putImageData(pixels, 0, 0);
   const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));

@@ -225,6 +225,14 @@ describe.skipIf(!FILE)('reflow test set (34 real pages)', () => {
     );
     expect(textOf(page(3)).some((t) => t.endsWith('其效果见边栏。'))).toBe(true);
   });
+  // The sample sentence and the footnote text are set in a CJK text font
+  // inside the typewriter listing; they belong to the listing all the same.
+  it('p3: the footnotemark listing is one code block, CJK lines included', () => {
+    expect(blocks(page(3), 'code').map((b) => b.text)).toContain(
+      '\\begin{tabular}{l}\n\\hline\n“天地玄黄，宇宙洪荒。日月盈昃，辰宿列张。”\\footnotemark \\\\\n\\hline\n\\end{tabular}\n\\footnotetext{表格里的名句出自《千字文》。}',
+    );
+    expect(textOf(page(3))).not.toContain('\\footnotetext{表格里的名句出自《千字文》。}');
+  });
   it('p3: a nested list listing keeps lines and indentation and is not a table', () => {
     expect(blocks(page(3), 'cell')).toHaveLength(0);
     expect(blocks(page(3), 'code').map((b) => b.text)).toContain(

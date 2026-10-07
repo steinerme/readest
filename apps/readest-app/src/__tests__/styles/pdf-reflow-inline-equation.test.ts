@@ -39,4 +39,14 @@ describe('inline equation styling', () => {
   it('paints equation ink in the text colour', () => {
     expect(rule('.pdf-reflow-ink')).toMatch(/background-color:\s*currentColor/);
   });
+  // A long code line or wide table is cut at the column edge; without a cue
+  // the cut-off part looks like the whole line. The hidden edge fades out.
+  it('fades the edge of a code block or table that hides content', () => {
+    for (const edge of ['end', 'start', 'both']) {
+      expect(css).toContain(`.pdf-reflow-code[data-overflow='${edge}']`);
+      expect(css).toContain(`.pdf-reflow-table-wrap[data-overflow='${edge}']`);
+    }
+    const end = css.slice(css.indexOf(".pdf-reflow-table-wrap[data-overflow='end'] {"));
+    expect(end.slice(0, end.indexOf('}'))).toMatch(/mask-image:\s*linear-gradient\(to right/);
+  });
 });

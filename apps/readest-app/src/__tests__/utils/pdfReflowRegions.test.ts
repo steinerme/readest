@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { inkMaskPixels } from '@/utils/pdfReflowInk';
+import { inkMaskPixels, isLineArt } from '@/utils/pdfReflowInk';
 import { fontClass, joinLineRuns, joinText, type Run } from '@/utils/pdfReflowLines';
 import { findGutter, textBoxes } from '@/utils/pdfReflowRegions';
 import { reflowPdfText, type PdfTextItem } from '@/utils/pdfReflow';
@@ -43,6 +43,27 @@ describe('equation ink mask (theme-following equation pictures)', () => {
     expect(px[15]).toBe(0);
     // Colour is dropped: the reader paints the mask with the text colour.
     expect([px[4], px[5], px[6], px[8], px[9], px[10]]).toEqual([0, 0, 0, 0, 0, 0]);
+  });
+  // lshort's typeset-output boxes are not marked as equations, yet they are
+  // black ink on white paper: they must follow the theme too. Colour charts
+  // and shaded diagrams keep their own pixels.
+  it('treats black-and-white pictures as line art and coloured ones as not', () => {
+    const picture = (paper: number, ink: number, coloured: number) => {
+      const px: number[] = [];
+      for (let i = 0; i < paper; i++) px.push(255, 255, 255, 255);
+      for (let i = 0; i < ink; i++) px.push(20, 20, 20, 255);
+      for (let i = 0; i < coloured; i++) px.push(230, 90, 90, 255);
+      return new Uint8ClampedArray(px);
+    };
+    expect(isLineArt(picture(95, 5, 0))).toBe(true);
+    expect(isLineArt(picture(90, 10, 0))).toBe(true);
+    // Bar chart: a quarter of the pixels are red bars.
+    expect(isLineArt(picture(70, 5, 25))).toBe(false);
+    // Dense dark picture (photo-like): too little paper.
+    expect(isLineArt(picture(50, 50, 0))).toBe(false);
+    // Transparent pixels count as paper.
+    expect(isLineArt(new Uint8ClampedArray([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255]))).toBe(false);
+    expect(isLineArt(new Uint8ClampedArray([]))).toBe(false);
   });
   it('keeps anti-aliased edges partly transparent', () => {
     const px = new Uint8ClampedArray([128, 128, 128, 255]);

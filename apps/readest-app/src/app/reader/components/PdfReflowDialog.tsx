@@ -19,6 +19,7 @@ import { useSettingsStore } from '@/store/settingsStore';
 import { useEnv } from '@/context/EnvContext';
 import { usePdfReflowTTS } from '../hooks/usePdfReflowTTS';
 import { useReflowSelectionMenu } from '../hooks/useReflowSelectionMenu';
+import { useReflowOverflowHints } from '../hooks/useReflowOverflowHints';
 import { useBookDataStore } from '@/store/bookDataStore';
 import { useReaderStore } from '@/store/readerStore';
 import { useTranslation } from '@/hooks/useTranslation';
@@ -114,6 +115,7 @@ const PdfReflowDialog = ({ bookKey, initialPage, onClose, onGoToLibrary }: Props
   const [citationEpoch, setCitationEpoch] = useState(0);
   const cacheRef = useRef(new Map<number, ReflowPage>());
   const tts = usePdfReflowTTS({ bookKey, page, count, result, setPage, scrollRef });
+  useReflowOverflowHints(scrollRef, result, fontSize);
 
   useEffect(() => {
     cacheRef.current.clear();

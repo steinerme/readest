@@ -537,6 +537,42 @@ export function reflowPdfText(
     return !(line.runs.length <= 2 && /^[A-Za-z_]\w{0,15}\.$/u.test(line.text.trim()) && !inCode(line));
   };
   const codeText = new Set(lines.filter(monoLine));
+  // Listings often set their CJK text (sample sentences, string contents) in
+  // a non-typewriter font, so such a line fails the typewriter test and
+  // splits one listing into several blocks. A line that has typewriter text,
+  // starts at a code line's left edge and is spaced like the listing joins
+  // it when code sits right above and below it, or when it opens with
+  // typewriter text right under a code line.
+  const monoShare = (line: Line) => {
+    let mono = 0;
+    let total = 0;
+    for (const run of line.runs) {
+      const n = run.text.trim().length;
+      total += n;
+      if (run.font === 'mono') mono += n;
+    }
+    return total ? mono / total : 0;
+  };
+  const listingNeighbour = (line: Line, above: boolean) =>
+    [...codeText].some((code) => {
+      const gap = above ? code.y - line.y : line.y - code.y;
+      return (
+        Math.abs(code.x - line.x) <= 2 &&
+        Math.abs(code.size - line.size) <= 0.5 &&
+        gap > 0 &&
+        gap <= line.size * 1.75
+      );
+    });
+  const listingLines = lines.filter((line) => {
+    if (codeText.has(line)) return false;
+    const share = monoShare(line);
+    if (!(share > 0)) return false;
+    const above = listingNeighbour(line, true);
+    if (!above) return false;
+    if (listingNeighbour(line, false)) return true;
+    return line.runs[0]?.font === 'mono' && share >= 0.3;
+  });
+  for (const line of listingLines) codeText.add(line);
   for (const line of codeText) codeLines.add(line);
   const tableCandidates = lines.filter((line) => !codeLines.has(line));
   const sparse = detectSparseTables(tableCandidates, pageWidth);
