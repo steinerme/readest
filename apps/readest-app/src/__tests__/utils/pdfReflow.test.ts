@@ -127,6 +127,72 @@ describe('reflowPdfText', () => {
     );
   });
 
+  // A running head carries the page number far from the title; it repeats on
+  // every page and is not reading text. Real top-of-page text stays.
+  describe('running heads and feet', () => {
+    const body = [
+      item('The body text starts well below the running head here.', 50, 700, 10),
+      item('And it continues for another full length line of prose.', 50, 686, 10),
+    ];
+    it('removes a head with the number at the left and the title at the right', () => {
+      const result = reflow([
+        item('22', 50, 770, 10, 11),
+        item('第三章', 420, 770, 10, 30),
+        item('文档元素', 460, 770, 10, 40),
+        ...body,
+      ]);
+      expect(result.removedPageNumbers).toEqual(['22第三章文档元素']);
+      expect(result.blocks.map((b) => b.text).join(' ')).not.toContain('第三章');
+    });
+    it('removes a head with the title at the left and the number at the right', () => {
+      const result = reflow([
+        item('3.3. Composition', 100, 770, 10, 80),
+        item('19', 500, 770, 10, 10),
+        ...body,
+      ]);
+      expect(result.removedPageNumbers).toHaveLength(1);
+      expect(result.blocks.map((b) => b.text).join(' ')).not.toContain('Composition');
+    });
+    it('removes a foot the same way', () => {
+      const result = reflow([
+        ...body,
+        item('58', 50, 30, 10, 11),
+        item('Chapter 6. Fruitful functions', 340, 30, 10, 133),
+      ]);
+      expect(result.removedPageNumbers).toHaveLength(1);
+    });
+    it('keeps a title line with no page number', () => {
+      const result = reflow([item('Chapter One Opening', 50, 770, 10, 90), ...body]);
+      expect(result.removedPageNumbers).toEqual([]);
+      expect(result.blocks[0]!.text).toContain('Chapter One');
+    });
+    it('keeps a number that sits right next to its text', () => {
+      const result = reflow([
+        item('Section', 50, 770, 10, 40),
+        item('7', 95, 770, 10, 6),
+        ...body,
+      ]);
+      expect(result.removedPageNumbers).toEqual([]);
+    });
+    it('keeps a top line that has body text right under it', () => {
+      const result = reflow([
+        item('22', 50, 770, 10, 11),
+        item('A heading far to the right', 420, 770, 10, 120),
+        item('Body text directly under the heading.', 50, 758, 10),
+        ...body,
+      ]);
+      expect(result.removedPageNumbers).toEqual([]);
+    });
+    it('keeps a large heading at the top of the page', () => {
+      const result = reflow([
+        item('1', 50, 770, 20, 12),
+        item('Introduction', 420, 770, 20, 120),
+        ...body,
+      ]);
+      expect(result.removedPageNumbers).toEqual([]);
+    });
+  });
+
   it('warns on empty or whitespace-only extraction', () => {
     expect(reflow([])).toEqual({ blocks: [], removedPageNumbers: [], warnings: ['empty-text'] });
     expect(reflow([item(' \n\t ', 50, 700)]).warnings).toContain('empty-text');

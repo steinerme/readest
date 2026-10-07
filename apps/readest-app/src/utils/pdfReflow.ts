@@ -73,6 +73,7 @@ export interface ReflowBlock {
 
 export interface ReflowPage {
   blocks: ReflowBlock[];
+  /** Page numbers and running heads/feet taken out of the text. */
   removedPageNumbers: string[];
   warnings: string[];
   /** Optional local-only provenance: normalized PDF item stream and, per block,
@@ -644,7 +645,45 @@ export function reflowPdfText(
   const columns = wideGapRows >= 3 && !regionInfo.twoColumns;
   if (columns) warn('possible-multiple-columns');
 
+  // A running head or foot is one small line in the page margin with the page
+  // number split far from the title ("22 ........ 第三章 文档元素",
+  // "§3.5 特殊环境 ........ 23") and clear space below (above, for a foot).
+  // It repeats on every page and is not part of the text.
+  const flowSize = textSize(lines.flatMap((line) => line.runs));
+  const isRunningHead = (line: Line) => {
+    if (!(pageHeight > 0) || line.runs.length < 2 || line.runs.some((run) => run.rotated))
+      return false;
+    const top = line.y > pageHeight * 0.9;
+    if (!top && !(line.y < pageHeight * 0.08)) return false;
+    // Not larger than the text by much (a page of 9pt listings under a 10pt
+    // head still counts); real headings are far bigger than the body.
+    if (line.size > flowSize * 1.3) return false;
+    const runs = [...line.runs].sort((a, b) => a.x - b.x);
+    const first = runs[0]!;
+    const last = runs[runs.length - 1]!;
+    const pageNumber = (run: Run) => /^\d{1,3}$/.test(run.text.trim());
+    const farFromTitle = (number: Run, other: Run) =>
+      Math.abs(other.x - number.x) - (other.x > number.x ? number.width : other.width) >=
+      line.size * 3;
+    const split =
+      (pageNumber(first) && farFromTitle(first, runs[1]!)) ||
+      (pageNumber(last) && farFromTitle(last, runs[runs.length - 2]!));
+    if (!split) return false;
+    // Body text must keep clear space from it: nothing else within 2.5 lines
+    // towards the page's inside.
+    return !lines.some(
+      (other) =>
+        other !== line &&
+        (top
+          ? other.y <= line.y + line.size * 0.5 && other.y >= line.y - line.size * 2.5
+          : other.y >= line.y - line.size * 0.5 && other.y <= line.y + line.size * 2.5),
+    );
+  };
   const kept = lines.filter((line, index) => {
+    if (isRunningHead(line)) {
+      result.removedPageNumbers.push(line.text);
+      return false;
+    }
     if (!(pageHeight > 0) || !/^\d+$/.test(line.text)) return true;
     // Four-digit years are deliberately preserved, including in page margins.
     const number = Number(line.text);

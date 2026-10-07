@@ -191,9 +191,11 @@ describe.skipIf(!FILE)('reflow test set (34 real pages)', () => {
       // Known, reviewed differences:
       // p9  a tall | and ‖ are each drawn as two stacked glyph pieces; one
       //     character is shown.
-      // p19 the italic "h" (head count) is printed just outside the bitmap of
-      //     Figure 3 and stays in the text next to the picture.
-      const allowed: Record<number, [string, string]> = { 9: ['∣∥', ''], 19: ['', 'h'] };
+      // p19 the labels "h" and "V K Q" of the attention diagram are printed a
+      //     point outside its bitmap; they belong to the picture, so they are
+      //     not shown as text (V, K, Q are the only characters not counted
+      //     as picture text by the check above).
+      const allowed: Record<number, [string, string]> = { 9: ['∣∥', ''], 19: ['VKQ', ''] };
       const ok = allowed[i + 1];
       if (ok && lost === ok[0] && extra === ok[1]) return;
       if (lost || extra)
@@ -335,6 +337,43 @@ describe.skipIf(!FILE)('reflow test set (34 real pages)', () => {
   // ---- Chinese survey (pages 18-21) ----
   it('p18: the timeline picture text is not repeated in the flow', () => {
     expect(textOf(page(18)).some((t) => t.includes('1966 2003 2018'))).toBe(false);
+  });
+  // Running heads repeat on every page; they are not text of the page.
+  it('running heads and feet are taken out on every page that has one', () => {
+    const heads: Record<number, string> = {
+      2: '第三章',
+      3: '特殊环境',
+      4: '第三章',
+      5: '表格',
+      6: '第四章',
+      7: '第四章',
+      8: '数组和矩阵',
+      9: '第四章',
+      18: '软件学报',
+      19: '软件学报',
+      20: '刘澳迪',
+      21: '软件学报',
+      30: 'Composition',
+      31: 'Stack diagrams',
+      32: 'Recursion',
+      33: 'Fruitful functions',
+      34: 'Named tuples',
+    };
+    for (const [n, word] of Object.entries(heads)) {
+      const data = page(Number(n));
+      const removed = data.page.removedPageNumbers.filter((t) => t.includes(word));
+      expect(removed, `page ${n}`).toHaveLength(1);
+      // The head must not also stay in the text as a block of its own. (The
+      // word itself may occur in the body, e.g. a section titled the same.)
+      const copy = textOf(data).filter((t) => chars(t).join('') === chars(removed[0]!).join(''));
+      expect(copy, `page ${n}`).toEqual([]);
+    }
+  });
+  it('p19: the "h" and "V K Q" labels of the attention diagram belong to the picture', () => {
+    const all = textOf(page(19));
+    expect(all).not.toContain('h');
+    expect(all).not.toContain('V K Q');
+    expect(blocks(page(19), 'note')).toHaveLength(0);
   });
   it('p19: the loss formulas are pictures', () => {
     expect(

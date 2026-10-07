@@ -1528,8 +1528,25 @@ export function analyzeLayout(
         (other.x + other.width < figure.rect.x0 - 2 || other.x > figure.rect.x1 + 2),
     );
   };
+  // Short, small labels printed hugging a bitmap figure's edge ("h" beside a
+  // diagram, "V K Q" under its arrows) belong to the picture even when they
+  // stick out a point or two. Full sentences and body-size text stay.
+  const hugsRaster = (run: Run) => {
+    const text = run.text.trim();
+    if (!text || text.length > 14 || run.size > bodySize * 0.95) return false;
+    const { x, y } = runCenter(run);
+    const pad = Math.max(8, run.size * 1.5);
+    const figure = rasters.find((f) => inRect(f.rect, x, y, pad));
+    if (!figure) return false;
+    return !runs.some(
+      (other) =>
+        other !== run &&
+        Math.abs(other.y - run.y) < run.size * 0.3 &&
+        (other.x + other.width < figure.rect.x0 - 2 || other.x > figure.rect.x1 + 2),
+    );
+  };
   const suppressed = (run: Run) => {
-    if (inRaster(run)) return true;
+    if (inRaster(run) || hugsRaster(run)) return true;
     const { x, y } = runCenter(run);
     const text = run.text.trim();
     const label =
