@@ -164,15 +164,64 @@ const BULLET_MARK = /^(?:[•·●○▪◦‣∙■□◆◇▶▸➢➤*]|[-�
 const NUMBER_MARK =
   /^(?:\d{1,2}[.)](?:\s|(?=\p{Script=Han}))|[（(]\d{1,2}[）)]\s*|\d{1,2}[、．]\s*)\S/u;
 const SENTENCE_END = /[.。;；:：!?！？)）]$/u;
+// Lettered or roman notes "(a) ", "(iv) " (SI table notes, legal clauses).
+const LETTER_MARK = /^\((?:[a-z]|[ivx]{2,4})\)\s+\S/u;
+
+/** The font that carries most of a line's characters (empty when unknown). */
+function mainFont(line: Line): string {
+  const share = new Map<string, number>();
+  for (const run of line.runs) {
+    const name = run.fontName ?? '';
+    share.set(name, (share.get(name) ?? 0) + run.text.trim().length);
+  }
+  let best = '';
+  let most = -1;
+  for (const [name, n] of share)
+    if (n > most) {
+      best = name;
+      most = n;
+    }
+  return best;
+}
+
+/**
+ * Centred lines that differ in font and start at different places (authors,
+ * affiliation, e-mail under a title) are separate lines, not the wrapped lines
+ * of one paragraph. A wrapped centred title has the same font on every line,
+ * and wrapped body lines share a left edge, so neither is split.
+ */
+function centredApart(line: Line, previous: Line | undefined): boolean {
+  if (!previous) return false;
+  const centre = (l: Line) => (l.x + l.end) / 2;
+  const fontA = mainFont(line);
+  const fontB = mainFont(previous);
+  return (
+    !!fontA &&
+    !!fontB &&
+    fontA !== fontB &&
+    Math.abs(centre(line) - centre(previous)) <= 2 &&
+    Math.abs(line.x - previous.x) >= Math.max(line.size, previous.size) * 1.5
+  );
+}
 
 /**
  * A new list item starts a new block. Bullets always do; numbered markers only
  * after a finished sentence or another item, so a wrapped line that happens to
  * begin with "2020) " or "3. " inside a sentence is not split.
  */
-export function startsListItem(line: string, previous: string | undefined): boolean {
+export function startsListItem(
+  line: string,
+  previous: string | undefined,
+  /** The line starts left of the previous one: a hanging-indent marker. */
+  outdented = false,
+): boolean {
   const text = line.trimStart();
   if (BULLET_MARK.test(text)) return true;
+  // A lettered note opens a new item after a finished sentence, or when its
+  // marker hangs out to the left of the wrapped lines above it.
+  if (LETTER_MARK.test(text) && previous !== undefined) {
+    return outdented || SENTENCE_END.test(previous.trimEnd());
+  }
   if (!NUMBER_MARK.test(text) || previous === undefined) return false;
   const before = previous.trimEnd();
   return SENTENCE_END.test(before) || BULLET_MARK.test(before) || NUMBER_MARK.test(before);
@@ -846,7 +895,12 @@ export function reflowPdfText(
         columns ||
         (codeLines.has(line) && !codeText.has(line)) ||
         (!!previous && codeLines.has(previous)) ||
-        startsListItem(line.text, previous?.text) ||
+        startsListItem(
+          line.text,
+          previous?.text,
+          !!previous && previous.x - line.x >= line.size * 0.5,
+        ) ||
+        centredApart(line, previous) ||
         dotLines.has(line) ||
         rotated ||
         separated

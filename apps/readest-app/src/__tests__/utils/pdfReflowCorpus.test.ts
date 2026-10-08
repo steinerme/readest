@@ -272,6 +272,22 @@ describe.skipIf(!FILE)('reflow test set (34 real pages)', () => {
   });
 
   // ---- BERT (pages 10-14): two columns ----
+  it('p10: title, authors, affiliation and e-mail are separate lines', () => {
+    const t = textOf(page(10));
+    expect(t.some((x) => x === 'Google AI Language')).toBe(true);
+    expect(t.some((x) => /^\{jacobdevlin,[^}]+\}@google\.com$/.test(x))).toBe(true);
+    expect(t.some((x) => x.startsWith('Jacob Devlin') && x.includes('Toutanova') && !x.includes('Google'))).toBe(true);
+    // The wrapped two-line title stays one block.
+    expect(t.some((x) => x.startsWith('BERT: Pre-training') && x.includes('Language Understanding'))).toBe(true);
+  });
+  it('p28: footnotes (a) to (i) are nine separate notes', () => {
+    const marked = textOf(page(28)).filter((x) => /^\([a-i]\) /.test(x));
+    expect(marked.map((x) => x.slice(0, 3))).toEqual(
+      ['(a)', '(b)', '(c)', '(d)', '(e)', '(f)', '(g)', '(h)', '(i)'],
+    );
+    // No note swallows the next marker.
+    expect(textOf(page(28)).some((x) => /\S \([b-i]\) [A-Z]/.test(x))).toBe(false);
+  });
   it('p10: the abstract and the introduction read as whole paragraphs', () => {
     const abstract = textOf(page(10)).find((t) => t.startsWith('We introduce a new language'));
     expect(abstract).toContain(

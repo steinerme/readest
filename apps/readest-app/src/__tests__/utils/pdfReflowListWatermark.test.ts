@@ -44,6 +44,67 @@ describe('startsListItem', () => {
   });
 });
 
+describe('lettered notes and centred lines', () => {
+  it('starts a lettered note after a finished sentence or at a hanging marker', () => {
+    expect(startsListItem('(b) The radian is the coherent unit.', 'It may not be possible.')).toBe(true);
+    expect(startsListItem('(iv) the fourth clause', 'See the third.')).toBe(true);
+    // The marker hangs out to the left of the wrapped line above it.
+    expect(startsListItem('(c) The steradian', 'abolished in 1995', true)).toBe(true);
+  });
+  it('keeps a lettered reference inside a sentence', () => {
+    expect(startsListItem('(b) shows the result', 'as can be seen in table', false)).toBe(false);
+    expect(startsListItem('(a)', 'see part', false)).toBe(false);
+    expect(startsListItem('(abc) text', 'It ended.', false)).toBe(false);
+  });
+  const named = (str: string, x: number, y: number, size: number, width: number, id: string) =>
+    ({ ...item(str, x, y, size), width, fontName: id }) as PdfTextItem;
+  // pdf.js font ids resolve to real names through the graphics' font table.
+  const withFonts = { images: [], segments: [], shapes: [], fills: [], fonts: { F1: 'Times-Bold', F2: 'Times-Roman', F3: 'Courier' } };
+  it('separates centred author, affiliation and address lines of different fonts', () => {
+    // Geometry of the BERT title block: the three lines are centred on one
+    // axis (x 297) with a line distance of 14 at size 12.
+    const page = reflowPdfText(
+      [
+        named('Jacob Devlin Ming-Wei Chang Kenton Lee Kristina Toutanova', 122, 702, 12, 355, 'F1'),
+        named('Google AI Language', 247, 688, 12, 101, 'F2'),
+        named('{jacobdevlin,mingweichang,kentonl,kristout}@google.com', 108, 674, 12, 385, 'F3'),
+        named('Abstract text that follows below the block at the margin.', 72, 600, 12, 330, 'F2'),
+      ],
+      600,
+      800,
+      false,
+      withFonts,
+    );
+    expect(page.blocks.map((b) => b.text)).toEqual([
+      'Jacob Devlin Ming-Wei Chang Kenton Lee Kristina Toutanova',
+      'Google AI Language',
+      '{jacobdevlin,mingweichang,kentonl,kristout}@google.com',
+      'Abstract text that follows below the block at the margin.',
+    ]);
+  });
+  it('keeps a centred title that wraps in one font as one block', () => {
+    const page = reflowPdfText(
+      [
+        // Same geometry as the BERT title: the second line is centred and
+        // only a little shorter than the first.
+        named('A Title That Runs Over Two', 150, 760, 14, 300, 'F1'),
+        named('Lines Of Text', 195, 744, 14, 210, 'F1'),
+        // Body text at the page's left edge, as on a real page, so the title
+        // is not itself taken for an indented line.
+        named('Body text starts at the left margin of the page.', 72, 600, 14, 300, 'F2'),
+      ],
+      600,
+      800,
+      false,
+      withFonts,
+    );
+    expect(page.blocks.map((b) => b.text)).toEqual([
+      'A Title That Runs Over Two Lines Of Text',
+      'Body text starts at the left margin of the page.',
+    ]);
+  });
+});
+
 describe('reflow list and watermark rules', () => {
   const body = [
     item('This paragraph is ordinary reading text that wraps onto a second line', 50, 700),
