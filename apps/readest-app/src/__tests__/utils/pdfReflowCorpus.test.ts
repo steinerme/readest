@@ -267,6 +267,21 @@ describe.skipIf(!FILE)('reflow test set (34 real pages)', () => {
       ).toBe(false);
     }
   });
+  // Result boxes of one source/result pair were merged with the sentence
+  // between them into one big drawing, so the boxes showed twice and the end
+  // of the sentence was swallowed.
+  it('p6: each result box is shown once and the sentence keeps its end', () => {
+    const figures = page(6).page.blocks.filter((b) => b.kind === 'figure');
+    expect(figures).toHaveLength(4);
+    const rects = figures.map((b) => b.figure!);
+    for (const a of rects)
+      for (const b of rects)
+        if (a !== b)
+          expect(
+            b.x0 >= a.x0 - 2 && b.x1 <= a.x1 + 2 && b.y0 >= a.y0 - 2 && b.y1 <= a.y1 + 2,
+          ).toBe(false);
+    expect(textOf(page(6))).toContain('一般的根式使用\\sqrt{⋯}；表示n次方根时写成\\sqrt[n]{⋯}。');
+  });
   it('p6: section numbers stay with their headings', () => {
     expect(textOf(page(6))).toContain('4.3.4关系符');
   });

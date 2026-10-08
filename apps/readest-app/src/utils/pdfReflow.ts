@@ -451,6 +451,39 @@ export function reflowPdfText(
       );
     layout.tables = layout.tables.filter((table) => !within(table.rect));
     layout.figures = layout.figures.filter((figure) => !within(figure.rect));
+    // A picture that wraps one or more result boxes (stacked boxes and the
+    // sentence between them merged into one drawing) shows the same boxes a
+    // second time, and swallows the sentence's words. The boxes are pictures
+    // of their own, so the wrapper goes.
+    const wraps = (outer: { x0: number; y0: number; x1: number; y1: number }) =>
+      mathBoxes.some(
+        (box) =>
+          box.x0 >= outer.x0 - 3 &&
+          box.x1 <= outer.x1 + 3 &&
+          box.y0 >= outer.y0 - 3 &&
+          box.y1 <= outer.y1 + 3 &&
+          (outer.x1 - outer.x0) * (outer.y1 - outer.y0) >
+            (box.x1 - box.x0) * (box.y1 - box.y0) * 1.05,
+      );
+    const wrappers = layout.figures.filter((figure) => wraps(figure.rect));
+    layout.figures = layout.figures.filter((figure) => !wraps(figure.rect));
+    // The wrapper had hidden every word inside it, including the end of the
+    // sentence between the boxes ("… 写成 \\sqrt[n]{…}。"). With the wrapper
+    // gone those words are body text again, unless they belong to a box,
+    // a table or another picture that stays.
+    const inRect = (r: { x0: number; y0: number; x1: number; y1: number }, x: number, y: number) =>
+      x >= r.x0 && x <= r.x1 && y >= r.y0 && y <= r.y1;
+    const have = new Set(runs);
+    for (const run of allRuns) {
+      if (have.has(run)) continue;
+      const cx = run.x + run.width / 2;
+      const cy = run.y + run.size * 0.3;
+      if (!wrappers.some((w) => inRect(w.rect, cx, cy))) continue;
+      if (mathBoxes.some((box) => inRect(box, cx, cy))) continue;
+      if (layout.figures.some((f) => inRect(f.rect, cx, cy))) continue;
+      if (layout.tables.some((t) => inRect(t.rect, cx, cy))) continue;
+      runs.push(run);
+    }
   }
   for (const box of mathBoxes) {
     for (const run of runs) {

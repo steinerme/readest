@@ -188,6 +188,45 @@ describe('reading order with boxes, columns and code', () => {
       ['paragraph', 'Result A Result B'],
     ]);
   });
+  // Two stacked result boxes with a sentence between them, each box holding
+  // typeset math and a short floating stroke, were merged with the sentence
+  // into one drawing: the boxes showed twice (once inside the wrapper) and the
+  // end of the sentence disappeared into the picture.
+  it('shows stacked result boxes once and keeps the sentence between them', () => {
+    const items = [
+      item('\\frac{a}{b}', 110, 690, 'm'),
+      item('Result one', 340, 690, 'cmr10'),
+      item('x', 380, 686, 'cmmi'),
+      item('Sentence start', 110, 640),
+      item('and its tail.', 340, 640),
+      item('\\sqrt{c}', 110, 600, 'm'),
+      item('Result two', 340, 600, 'cmr10'),
+      item('y', 380, 596, 'cmmi'),
+    ];
+    const stroke = (x0: number, y: number, x1: number) => ({ x0, y0: y, x1, y1: y });
+    const graphics: PdfGraphics = {
+      images: [],
+      shapes: [],
+      fills: [],
+      segments: [
+        ...box(320, 675, 520, 705),
+        ...box(320, 585, 520, 615),
+        stroke(430, 690, 440),
+        stroke(430, 600, 440),
+      ],
+      fonts: { m: 'CMUTypewriter-Light', cmr10: 'CMR10', cmmi: 'CMMI10' },
+    };
+    const page = reflowPdfText(items, 595, 842, false, graphics);
+    const figures = page.blocks.filter((b) => b.kind === 'figure').map((b) => b.figure!);
+    // No picture contains another one.
+    for (const a of figures)
+      for (const b of figures)
+        if (a !== b)
+          expect(
+            b.x0 >= a.x0 - 2 && b.x1 <= a.x1 + 2 && b.y0 >= a.y0 - 2 && b.y1 <= a.y1 + 2,
+          ).toBe(false);
+    expect(page.blocks.map((b) => b.text).join('|')).toContain('Sentence start and its tail.');
+  });
   it('keeps code indentation relative to the listing', () => {
     const items = [
       item('def f(n):', 100, 700, 'm'),
